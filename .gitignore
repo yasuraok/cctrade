@@ -1,5 +1,6 @@
 node_modules
 config.json
 index.js
+data/database.db
 
 *.map

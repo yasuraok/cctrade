@@ -1,11 +1,26 @@
-var fs = require('fs');
-var request = require('request');
-var zaif = require('zaif.jp');
+var fs        = require('fs');
+var request   = require('request');
+var zaif      = require('zaif.jp');
+var Datastore = require('nedb');
 
+function dateFormat(now){
+  const Y = now.getFullYear();
+  const M = now.getMonth() + 1;
+  const D = now.getDate();
+  const h = now.getHours();
+  const m = now.getMinutes();
+  const s = now.getSeconds();
+  return Y + "/" + M + "/" + D + " " + h + ":" + m + ":" + s;
+}
 
+// zaifに接続する
 var config = JSON.parse(fs.readFileSync('./config.json'));
 var apiPri = zaif.createPrivateApi(config.apikey, config.secretkey, 'user agent is node-zaif');
 var apiPub = zaif.PublicApi;
+
+// ローカルのdbを開く
+var db = new Datastore({filename: 'data/database.db', autoload: true});
+
 
 function check(){
   console.log(apiPub);
@@ -59,28 +74,42 @@ class CCList{
 }
 
 
-// function currencies_all(){
-//   request.get({uri: "https://api.zaif.jp/api/1/currency_pairs/all"},
-//     function(error, response, body){
-//     console.log(JSON.parse(body));
-//     // console.log(body);
-//   });
-// }
-
 check();
 // notify2ifttt();
 // currencies_all();
 
 var cl:CCList = new CCList();
-cl.load(function(){
-  // 各通貨に対して価格を取得して、自分のDBに記録する
+cl.load(() => {
+  // 各通貨に対して...
   for(let c of cl.pairs){
+    // 1. 価格を取得する
     // 本当はdepthを見てスプレッドを見た方がいい
     request.get({uri: "https://api.zaif.jp/api/1/last_price/" + c.currency_pair},
       (error, response, body) =>{
-        console.log(c.currency_pair, ":", JSON.parse(body).last_price);
+        // 2. 自分のDBに記録する
+        const now    = new Date();
+        const price  = JSON.parse(body).last_price;
+        const record = {date: now.getTime(), pair: c.currency_pair, price: price};
+
+        console.log(dateFormat(now), c.currency_pair, ":", JSON.parse(body).last_price);
+        db.insert(record, (err) => {
+          // 既存記録とレコードとまとめる
+          const query = {pair: c.currency_pair, date: now};
+          db.find(query, (err, docs) => {
+            // エージェントに対して
+            const agents = [];
+            for(let agent of agents){
+              // 3. 移動平均を作る
+
+              // 4. 判断を入れる (買ってない場合->買うか何もしないか、買っている場合->買い増すか売るか何もしないか)
+
+              // 5. 通知を入れる
+
+            }
+          });
+        });
       });
   }
 
   // console.log(this.pairs);
-}.bind(cl))
+});

@@ -12,10 +12,12 @@
   "license": "ISC",
   "dependencies": {
     "@types/node": "^8.5.2",
+    "nedb": "^1.8.0",
     "request": "^2.83.0",
     "zaif.jp": "^0.1.16"
   },
   "devDependencies": {
+    "@types/nedb": "^1.8.5",
     "typescript": "^2.6.2"
   }
 }
