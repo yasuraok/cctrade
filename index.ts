@@ -77,9 +77,9 @@ class CCWatch{
   }
 
   // 価格情報の1レコードのjsonを作る
-  makeRecord(pair, time, price): object{
-    // date, currency_pair, price
-    return {c: pair, d: time, p: price};
+  makeRecord(pair, time, ticker): object{
+    // date, currency_pair, ask: bit
+    return {d: time, p: pair, a: ticker.ask, b: ticker.bid};
   }
 
   // 現在価格を取得して場合によっては取引する
@@ -87,14 +87,16 @@ class CCWatch{
     for(let c of this.pairs){
       // 1. 価格を取得する
       // 本当はdepthを見てスプレッドを見た方がいい
-      request.get({uri: "https://api.zaif.jp/api/1/last_price/" + c.currency_pair},
+      request.get({uri: "https://api.zaif.jp/api/1/ticker/" + c.currency_pair},
         (error, response, body) =>{
+          const ticker = JSON.parse(body);
+
           // 2. 自分のDBに記録する
           const now    = new Date();
           const price  = JSON.parse(body).last_price;
-          const record = this.makeRecord(c.currency_pair, now.getTime(), price);
+          const record = this.makeRecord(c.currency_pair, now.getTime(), ticker);
 
-          console.log(dateFormat(now), c.currency_pair, ":", price);
+          console.log(dateFormat(now), c.currency_pair, ": ask=" + ticker.ask, ", bid=" + ticker.bid);
           db.insert(record, (err) => {
             // 既存記録とレコードとまとめる
             const query = {pair: c.currency_pair, date: now};
