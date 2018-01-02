@@ -52,11 +52,74 @@ function notify2ifttt(){
   request.post(options, function(error, response, body){});
 }
 
+// 自分のパラメータに基づいて判断をして売り買いを実行する
+// (買ってない場合->買うか何もしないか、買っている場合->買い増すか売るか何もしないか)
+// 移動平均など売り買いに必要な判断をつける
+// 判断に基づいて売り買いを実行する
+// 通知を入れる
+class Agent{
+  average_price: Number; // 買い付けている時の買い付け価格
+
+  constructor(){
+    this.average_price = 0;
+  }
+
+  // 今買っているかどうか
+  has(): Boolean{
+    return this.average_price > 0;
+  }
+
+  // 新しい価格リストを受け取って、売り買いの判断をつける
+  update(records): void{
+    const latest = records.reduce((x, y) => { return x.d > y.d ? x : y});
+    if (this.has()){
+      // 買っている場合->買い増すか売るか何もしないか)
+      const sell:Boolean = true
+      if (sell){
+        // 成行で売る=bidの価格で売ったことにする
+        console.log("Sell:", latest.p, "for", latest.b, "yen from", this.average_price, "yen");
+        this.average_price = 0;
+      }
+    } else {
+      // 買ってない場合->買うか何もしないか
+      const buy:Boolean = true
+      if (buy){
+        this.average_price = latest.a // 成行で買う=askの価格で買ったことにする
+        console.log("Buy:", latest.p, "for", this.average_price, "yen");
+      }
+    }
+  }
+}
+
+// 上のAgentを設定違いで複数個もって取引をシミュレートし、最適なものを実際の取引に使う
+class Agents{
+  active_index: number; // nullable
+  agents: Agent[];
+
+  constructor(){
+    this.active_index = null;
+    this.agents = [new Agent()];
+  }
+
+  has(): Boolean{
+    return (this.active_index != null) && this.agents[this.active_index].has();
+  }
+
+  update(records): void{
+    for(let agent of this.agents){
+      agent.update(records);
+    }
+  }
+}
+
 class CCWatch{
   readonly interval = 60 * 1000; // 監視タイム
 
-  pairs: any
-  constructor(){}
+  pairs: any;
+  agents: { [key: string]: Agents};
+  constructor(){
+    this.agents = {};
+  }
 
   // zaifで現在扱っている通貨ペアのリストを取得してコールバックを呼ぶ
   start(): void{
@@ -71,6 +134,14 @@ class CCWatch{
           return isJpy && isActive;
         });
 
+        // 見つかった通貨ペアごとにエージェントを用意する
+        for(let pair of this.pairs){
+          let pairstr: string = pair.currency_pair;
+          if(! (pairstr in this.agents)){
+            this.agents[pairstr] = new Agents();
+          }
+        }
+
         // 監視スタート
         this.watch();
     });
@@ -84,33 +155,26 @@ class CCWatch{
 
   // 現在価格を取得して場合によっては取引する
   update(): void{
-    for(let c of this.pairs){
+    for(let pair of this.pairs){
+      let pairstr: string = pair.currency_pair;
       // 1. 価格を取得する
       // 本当はdepthを見てスプレッドを見た方がいい
-      request.get({uri: "https://api.zaif.jp/api/1/ticker/" + c.currency_pair},
+      request.get({uri: "https://api.zaif.jp/api/1/ticker/" + pairstr},
         (error, response, body) =>{
           const ticker = JSON.parse(body);
 
           // 2. 自分のDBに記録する
           const now    = new Date();
           const price  = JSON.parse(body).last_price;
-          const record = this.makeRecord(c.currency_pair, now.getTime(), ticker);
+          const record = this.makeRecord(pairstr, now.getTime(), ticker);
 
-          console.log(dateFormat(now), c.currency_pair, ": ask=" + ticker.ask, ", bid=" + ticker.bid);
+          console.log(dateFormat(now), pairstr, ": ask=" + ticker.ask, ", bid=" + ticker.bid);
           db.insert(record, (err) => {
             // 既存記録とレコードとまとめる
-            const query = {pair: c.currency_pair, date: now};
-            db.find(query, (err, docs) => {
-              // エージェントに対して
-              const agents = [];
-              for(let agent of agents){
-                // 3. 移動平均を作る
-
-                // 4. 判断を入れる (買ってない場合->買うか何もしないか、買っている場合->買い増すか売るか何もしないか)
-
-                // 5. 通知を入れる
-
-              }
+            const query = {p: pairstr};
+            db.find(query, (err, records) => {
+              // 各エージェントに判断を仰ぐ
+              this.agents[pairstr].update(records);
             });
           });
         });
