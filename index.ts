@@ -28,29 +28,39 @@ function check(){
   console.log(apiPri);
 }
 
-// apiPub.depth('mona_jpy').then(function(res){
-//   console.log(res);
-// });
-
-
+// 現在の取引状況を取得する
 function getStatus(){
   apiPri.getInfo().then(function(res){
       console.log(res)
   });
 }
 
-function notify2ifttt(){
+// IFTTT経由でスマホに通知する
+function notify2ifttt(message:string){
   var options = {
     uri: "https://maker.ifttt.com/trigger/cc/with/key/" + config.ifttt,
     headers: {
       "Content-type": "application/json",
     },
     json: {
-      "value1": "a",
-      "value2": "b"
+      "value1": message,
+      // "value2": "b"
     }
   };
   request.post(options, function(error, response, body){});
+}
+
+// promiseパターンでhttp getする
+function promiseRequestGet(uri:string){
+  return new Promise(function(resolve, reject){
+    request.get({uri: uri}, (error, response, body) =>{
+      if (!error && response.statusCode == 200) {
+        resolve(body);
+      } else {
+        reject({error: error, status: response.statusCode});
+      }
+    });
+  });
 }
 
 // ask円の通貨を、yen円内で最大でいくつ買えるかを計算する
@@ -138,8 +148,8 @@ class CCWatch{
 
   // zaifで現在扱っている通貨ペアのリストを取得してコールバックを呼ぶ
   start(): void{
-    request.get({uri: "https://api.zaif.jp/api/1/currency_pairs/all"},
-      (error, response, body) => {
+    promiseRequestGet("https://api.zaif.jp/api/1/currency_pairs/all")
+      .then((body:string) => {
         // 通貨ペア一覧からJPYのものだけを取り出す
         // "公開情報APIのcurrency_pairsで取得できるevent_numberが0であるものが指定できます" とのことなので
         // それもフィルタリングする
@@ -159,7 +169,10 @@ class CCWatch{
 
         // 監視スタート
         this.watch();
-    });
+      })
+      .catch((error) => {
+        console.log("ERROR: promiseRequestGet", error);
+      });
   }
 
   // 価格情報の1レコードのjsonを作る
@@ -174,8 +187,8 @@ class CCWatch{
       let pairstr: string = pair.currency_pair;
       // 1. 価格を取得する
       // 本当はdepthを見てスプレッドを見た方がいい
-      request.get({uri: "https://api.zaif.jp/api/1/ticker/" + pairstr},
-        (error, response, body) =>{
+      promiseRequestGet("https://api.zaif.jp/api/1/ticker/" + pairstr)
+        .then((body:string) => {
           const ticker = JSON.parse(body);
 
           // 2. 自分のDBに記録する
@@ -193,6 +206,10 @@ class CCWatch{
               this.agents[pairstr].update(records, amount);
             });
           });
+        })
+        .catch((error) => {
+          console.log("ERROR: promiseRequestGet", error);
+          notify2ifttt("error: ticker, " + pairstr);
         });
     }
   }
