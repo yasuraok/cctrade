@@ -12,6 +12,7 @@
   "license": "ISC",
   "dependencies": {
     "@types/node": "^8.5.2",
+    "decimal": "0.0.2",
     "nedb": "^1.8.0",
     "request": "^2.83.0",
     "zaif.jp": "^0.1.16"
