@@ -20,7 +20,8 @@ var apiPri = zaif.createPrivateApi(config.apikey, config.secretkey, 'user agent 
 var apiPub = zaif.PublicApi;
 
 // ローカルのdbを開く
-var db = new Datastore({filename: 'data/database.db', autoload: true});
+var db     = new Datastore({filename: 'data/database.db', autoload: true});
+var scores = new Datastore({filename: 'data/score.db',    autoload: true});
 
 
 function check(){
@@ -81,32 +82,47 @@ function calcAmount(ask:number, yen:number, unitMin:number, unitStep:number){
 // 移動平均など売り買いに必要な判断をつける
 // 判断に基づいて売り買いを実行する
 // 通知を入れる
-class Agent{
-  average_price: Number; // 買い付けている時の買い付け価格
+interface AgentParam { [key:string]: number; }
+function AgentParam_make(ass:number, aal:number, bas:number, bal:number, acr:number, spr:number){
+  let obj:AgentParam = {ass:ass, aal:aal, bas:bas, bal:bal, acr:acr, spr:spr};
+  return obj;
+}
 
-  constructor(){
+
+class Agent{
+  average_price: number; // 買い付けている時の買い付け価格
+  param: AgentParam; // 自動売買の判断基準パラメータ
+
+  constructor(pair: string, param: AgentParam){
+    this.param         = param;
     this.average_price = 0;
   }
 
   // 今買っているかどうか
-  has(): Boolean{
+  has(): boolean{
     return this.average_price > 0;
   }
 
   // 新しい価格リストを受け取って、売り買いの判断をつける
-  update(records, amount:number): void{
+  update(pair:string, records:any, amount:number): void{
     const latest = records.reduce((x, y) => { return x.d > y.d ? x : y});
     if (this.has()){
       // 買っている場合->買い増すか売るか何もしないか)
-      const sell:Boolean = true
+      const sell:boolean = true
       if (sell){
         // 成行で売る=bidの価格で売ったことにする
         console.log("Sell:", latest.p, "for", latest.b, "yen from", this.average_price, "yen");
+        // 結果をデータベースに記録する
+        let score = {param: this.param, p: pair, s: latest.b, b: this.average_price}; // pair/sell/buy
+        scores.insert(score, (err) => {
+          console.log("store:", score);
+        });
+
         this.average_price = 0;
       }
     } else {
       // 買ってない場合->買うか何もしないか
-      const buy:Boolean = true
+      const buy:boolean = true
       if (buy && (amount > 0)){
         this.average_price = latest.a // 成行で買う=askの価格で買ったことにする
         const payment:number = latest.a * amount;
@@ -120,19 +136,21 @@ class Agent{
 class Agents{
   active_index: number; // nullable
   agents: Agent[];
+  pair: string;
 
-  constructor(){
+  constructor(pair: string){
+    this.pair   = pair;
     this.active_index = null;
-    this.agents = [new Agent()];
+    this.agents = [new Agent(pair, AgentParam_make(0,0,0,0,0,0))];
   }
 
-  has(): Boolean{
+  has(): boolean{
     return (this.active_index != null) && this.agents[this.active_index].has();
   }
 
   update(records, amount:number): void{
     for(let agent of this.agents){
-      agent.update(records, amount);
+      agent.update(this.pair, records, amount);
     }
   }
 }
@@ -163,7 +181,7 @@ class CCWatch{
         for(let pair of this.pairs){
           let pairstr: string = pair.currency_pair;
           if(! (pairstr in this.agents)){
-            this.agents[pairstr] = new Agents();
+            this.agents[pairstr] = new Agents(pairstr);
           }
         }
 
