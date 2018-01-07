@@ -23,6 +23,8 @@ var apiPub = zaif.PublicApi;
 var db     = new Datastore({filename: 'data/database.db', autoload: true});
 var scores = new Datastore({filename: 'data/score.db',    autoload: true});
 
+const DAYS4SCORING:number = 7; // 何日前までの取引履歴を成績として使うか
+const AMOUNT:number = 1000; // 一度の取引で買う日本円金額
 
 function check(){
   console.log(apiPub);
@@ -104,16 +106,16 @@ class Agent{
   }
 
   // 新しい価格リストを受け取って、売り買いの判断をつける
-  update(pair:string, records:any, amount:number): void{
+  update(pair:string, now:Date, records:any, amount:number): void{
     const latest = records.reduce((x, y) => { return x.d > y.d ? x : y});
     if (this.has()){
       // 買っている場合->買い増すか売るか何もしないか)
       const sell:boolean = true
       if (sell){
         // 成行で売る=bidの価格で売ったことにする
-        console.log("Sell:", latest.p, "for", latest.b, "yen from", this.average_price, "yen");
+        console.log("Sell:", pair, "for", latest.b, "yen from", this.average_price, "yen");
         // 結果をデータベースに記録する
-        let score = {param: this.param, p: pair, s: latest.b, b: this.average_price}; // pair/sell/buy
+        let score = {p: pair, param: this.param, d: now.getTime(), s: latest.b, b: this.average_price}; // day/pair/sell/buy
         scores.insert(score, (err) => {
           console.log("store:", score);
         });
@@ -126,7 +128,7 @@ class Agent{
       if (buy && (amount > 0)){
         this.average_price = latest.a // 成行で買う=askの価格で買ったことにする
         const payment:number = latest.a * amount;
-        console.log("Buy:", latest.p, "for", this.average_price, "*", amount, "=", payment, "yen");
+        console.log("Buy:", pair, "for", this.average_price, "*", amount, "=", payment, "yen");
       }
     }
   }
@@ -149,8 +151,25 @@ class Agents{
   }
 
   update(records, amount:number): void{
+    if(records.length == 0) return;
+
+    const now = new Date();
+    // シミュレーション取引用のエージェントを動かす
     for(let agent of this.agents){
-      agent.update(this.pair, records, amount);
+      agent.update(this.pair, now, records, amount);
+    }
+
+    // これまでの各Agentのscoreを参照して、成績のよいものを本番取引に使う
+    const daysAgoEpoch = now.getTime() - DAYS4SCORING*24*60*60*1000;
+    for(let agent of this.agents){
+      const query = {p: this.pair, param: agent.param, d: {$gte: daysAgoEpoch}}; // 直近DAYS4SCORING日の成績を検索するクエリ
+      scores.find(query, (err, records) => {
+        // 各scoreの損益を足し込む
+        const profits = records.map((x) => {return x.s - x.b;}); // レコードごとの損益
+        const profit  = profits.reduce((x, y) => { return x + y}, 0); // レコード全体の損益合計
+
+        console.log("profit:", agent.param, this.pair, now, profit);
+      });
     }
   }
 }
@@ -216,7 +235,7 @@ class CCWatch{
           console.log(dateFormat(now), pairstr, ": ask=" + ticker.ask, ", bid=" + ticker.bid);
           db.insert(record, (err) => {
             // 買う場合の購入数量を決める
-            const amount:number = calcAmount(ticker.ask, 1000, pair.item_unit_min, pair.item_unit_step);
+            const amount:number = calcAmount(ticker.ask, AMOUNT, pair.item_unit_min, pair.item_unit_step);
             // 既存記録とレコードとまとめる
             const query = {p: pairstr};
             db.find(query, (err, records) => {
