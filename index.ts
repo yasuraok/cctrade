@@ -17,13 +17,47 @@ function dateFormat(now){
 // zaifに接続する
 var config = JSON.parse(fs.readFileSync('./config.json'));
 var apiPri = zaif.createPrivateApi(config.apikey, config.secretkey, 'user agent is node-zaif');
-var apiPub = zaif.PublicApi;
 
-// ローカルのdbを開く
-var db     = new Datastore({filename: 'data/database.db', autoload: true});
+// 価格情報のDBのラッパー
+// 非同期処理はpromise化しておく/findとinsertをこの機能に合わせた引数定義にする
+class PriceDB{
+  private db;
+  constructor(filename:string){
+    this.db = new Datastore({filename: filename, autoload: true});
+  }
+
+  // 価格情報の1レコードを作成して格納する
+  insert(pair:string, ticker){
+    return new Promise((resolve, reject) => {
+      const record = {p: pair, d:new Date().getTime(), a: ticker.ask, b:ticker.bid}; // pair/date/ask/bid
+      this.db.insert(record, (err) => {
+        if (err == null) {
+          resolve(record);
+        } else {
+          reject(err);
+        }
+      });
+    });
+  }
+
+  // 価格一覧を取得する
+  find(pair:string){
+    return new Promise((resolve, reject) => {
+      const query = {p: pair};
+      this.db.find(query, (err, records) => {
+        if (err == null) {
+          resolve(records);
+        } else {
+          reject(err);
+        }
+      });
+    });
+  }
+}
+var prices = new PriceDB('data/database.db');
 
 // 異なる判断規準で取引をするエージェント達のシミュレーション取引の結果を記録するDBのラッパー
-// 非同期処理はpromise化しておく
+// 非同期処理はpromise化しておく/findとinsertをこの機能に合わせた引数定義にする
 class ScoreDB{
   private db;
   constructor(filename:string){
@@ -66,7 +100,6 @@ const DAYS4SCORING:number = 7; // 何日前までの取引履歴を成績とし�
 const AMOUNT:number = 1000; // 一度の取引で買う日本円金額
 
 function check(){
-  console.log(apiPub);
   console.log(apiPri);
 }
 
@@ -144,29 +177,36 @@ class Agent{
     return this.average_price > 0;
   }
 
-  // 新しい価格リストを受け取って、売り買いの判断をつける
-  update(pair:string, now:Date, records:any, amount:number): void{
-    const latest = records.reduce((x, y) => { return x.d > y.d ? x : y});
-    if (this.has()){
-      // 買っている場合->買い増すか売るか何もしないか)
-      const sell:boolean = true
-      if (sell){
-        // 成行で売る=bidの価格で売ったことにする
-        console.log("Sell:", pair, "for", latest.b, "yen from", this.average_price, "yen");
-        // 結果をデータベースに記録する
-        scores.insert(pair, this.param, latest.b, this.average_price);
-
-        this.average_price = 0;
-      }
-    } else {
-      // 買ってない場合->買うか何もしないか
-      const buy:boolean = true
-      if (buy && (amount > 0)){
-        this.average_price = latest.a // 成行で買う=askの価格で買ったことにする
-        const payment:number = latest.a * amount;
-        console.log("Buy:", pair, "for", this.average_price, "*", amount, "=", payment, "yen");
-      }
+  // 買っている場合->買い増すか売るか何もしないか)
+  trySell(pair:string, latest:any, records:any){
+    const sell:boolean = true
+    if (sell){
+      // 成行で売る=bidの価格で売ったことにする
+      console.log("Sell:", pair, "for", latest.b, "yen from", this.average_price, "yen");
+      // 結果をデータベースに記録する
+      return scores.insert(pair, this.param, latest.b, this.average_price)
+        .then(() => {
+          this.average_price = 0; // 価格を初期化
+          return;
+        })
     }
+    return Promise.resolve();
+  }
+
+  tryBuy(pair:string, latest:any, records:any, amount:number){
+    // 買ってない場合->買うか何もしないか
+    const buy:boolean = true
+    if (buy && (amount > 0)){
+      this.average_price = latest.a // 成行で買う=askの価格で買ったことにする
+      const payment:number = latest.a * amount;
+      console.log("Buy:", pair, "for", this.average_price, "*", amount, "=", payment, "yen");
+    }
+    return Promise.resolve();
+  }
+
+  // 新しい価格リストを受け取って、売り買いの判断をつける
+  update(pair:string, latest:any, records:any, amount:number){
+    return this.has() ? this.trySell(pair, latest, records) : this.tryBuy(pair, latest, records, amount);
   }
 }
 
@@ -186,18 +226,28 @@ class Agents{
     return (this.active_index != null) && this.agents[this.active_index].has();
   }
 
-  update(records, amount:number): void{
+  update(latest, records, amount:number){
     if(records.length == 0 || this.agents.length == 0) return;
 
-    const now = new Date();
-    // シミュレーション取引用のエージェントを動かす
-    for(let agent of this.agents){
-      agent.update(this.pair, now, records, amount);
-    }
+    // 各エージェントで取引処理を動かす -> 成績を調べる
+    let promises = this.agents.map((agent) => {
+      // シミュレーション取引用のエージェントを動かす
+      return agent.update(this.pair, latest, records, amount)
+        .then(() => {
+          // 過去も含む取引成績をDBから非同期で取得する
+          return scores.find(this.pair, agent.param)
+        })
+        .then((records:any[]) => {
+          // 各scoreの損益を足し込む
+          const profits = records.map((x) => {return x.s - x.b;}); // レコードごとの損益
+          const profit  = profits.reduce((x, y) => { return x + y}, 0); // レコード全体の損益合計
 
-    // 全エージェントの取引成績を非同期で取得して、結果を元に最高評価のエージェントを本番用にセットする
-    let promises = this.agents.map((agent) => this.calcScore(this.pair, agent.param));
-    Promise.all(promises)
+          return {param:agent.param, profit:profit};
+        })
+    });
+
+    // 取得できたら、結果を元に最高評価のエージェントを本番用にセットする
+    return Promise.all(promises)
       .then((results:any[]) => {
         for(let result of results){
           console.log("profit:", result.param, this.pair, result.profit);
@@ -213,14 +263,6 @@ class Agents{
   // 1エージェントの取引成績を計算するpromise
   // agentと成績=profitのペアを返す
   calcScore(pair:string, param:AgentParam) {
-    return scores.find(pair, param)
-      .then((records:any[]) => {
-        // 各scoreの損益を足し込む
-        const profits = records.map((x) => {return x.s - x.b;}); // レコードごとの損益
-        const profit  = profits.reduce((x, y) => { return x + y}, 0); // レコード全体の損益合計
-
-        return {param:param, profit:profit};
-      });
   }
 }
 
@@ -264,40 +306,37 @@ class CCWatch{
       });
   }
 
-  // 価格情報の1レコードのjsonを作る
-  makeRecord(pair, time, ticker): object{
-    // date, currency_pair, ask: bit
-    return {d: time, p: pair, a: ticker.ask, b: ticker.bid};
-  }
-
   // 現在価格を取得して場合によっては取引する
-  update(): void{
+  update(){
     for(let pair of this.pairs){
-      let pairstr: string = pair.currency_pair;
+      let pairstr:string = pair.currency_pair;
+      let amount:number = 0; // promise内で代入
+      let latest:any;        // 最新価格: promise内で代入
+
       // 1. 価格を取得する
       // 本当はdepthを見てスプレッドを見た方がいい
       promiseRequestGet("https://api.zaif.jp/api/1/ticker/" + pairstr)
         .then((body:string) => {
           const ticker = JSON.parse(body);
 
-          // 2. 自分のDBに記録する
-          const now    = new Date();
-          const record = this.makeRecord(pairstr, now.getTime(), ticker);
+          console.log(dateFormat(new Date()), pairstr, ": ask=" + ticker.ask, ", bid=" + ticker.bid);
 
-          console.log(dateFormat(now), pairstr, ": ask=" + ticker.ask, ", bid=" + ticker.bid);
-          db.insert(record, (err) => {
-            // 買う場合の購入数量を決める
-            const amount:number = calcAmount(ticker.ask, AMOUNT, pair.item_unit_min, pair.item_unit_step);
-            // 既存記録とレコードとまとめる
-            const query = {p: pairstr};
-            db.find(query, (err, records) => {
-              // 各エージェントに判断を仰ぐ
-              this.agents[pairstr].update(records, amount);
-            });
-          });
+          // 買う場合の購入数量を決める
+          amount = calcAmount(ticker.ask, AMOUNT, pair.item_unit_min, pair.item_unit_step);
+          // DBに登録する
+          return prices.insert(pairstr, ticker);
+        })
+        .then((record) => {
+          latest = record;
+          // これまでの価格履歴を取得する
+          return prices.find(pairstr);
+        })
+        .then((records) => {
+          // 各エージェントに判断を仰ぐ
+          return this.agents[pairstr].update(latest, records, amount);
         })
         .catch((error) => {
-          console.log("ERROR: promiseRequestGet", error);
+          console.log("ERROR: update", error);
           notify2ifttt("error: ticker, " + pairstr);
         });
     }
