@@ -97,7 +97,7 @@ var scores = new ScoreDB('data/score.db');
 
 
 const DAYS4SCORING:number = 7; // 何日前までの取引履歴を成績として使うか
-const AMOUNT:number = 1000; // 一度の取引で買う日本円金額
+const AMOUNT:number = 10000; // 一度の取引で買う日本円金額
 
 function check(){
   console.log(apiPri);
@@ -170,17 +170,19 @@ function AgentParam_make(aas:number, aal:number, bas:number, bal:number, acr:num
 // 判断に基づいて売り買いを実行する
 // 通知を入れる
 class Agent{
-  average_price: number; // 買い付けている時の買い付け価格
+  amount: number;  // 買い付けている時の買い付け量
+  payment: number; // 買い付けている時の支払い総額
   param: AgentParam; // 自動売買の判断基準パラメータ
 
   constructor(pair: string, param: AgentParam){
-    this.param         = param;
-    this.average_price = 0;
+    this.param   = param;
+    this.amount  = 0;
+    this.payment = 0;
   }
 
   // 今買っているかどうか
   has(): boolean{
-    return this.average_price > 0;
+    return this.amount > 0;
   }
 
   // 買っている場合->買い増すか売るか何もしないか)
@@ -195,11 +197,14 @@ class Agent{
 
     if (sell){
       // 成行で売る=bidの価格で売ったことにする
-      console.log("Sell:", pair, "for", latest.b, "yen from", this.average_price, "yen");
+      const receive:number = Math.floor(latest.b * this.amount);
+      const profit:number  = receive - this.payment;
+      console.log(dateFormat(new Date()), pair, "Sell for", latest.b, "yen *", this.amount, "(profit", profit, ")");
       // 結果をデータベースに記録する
-      return scores.insert(pair, this.param, latest.b, this.average_price)
+      return scores.insert(pair, this.param, receive, this.payment)
         .then(() => {
-          this.average_price = 0; // 価格を初期化
+          this.amount  = 0; // 価格を初期化
+          this.payment = 0; // 価格を初期化
           return;
         })
     }
@@ -217,9 +222,9 @@ class Agent{
     const buy:boolean = avgShort >= avgLong;
 
     if (buy && (amount > 0)){
-      this.average_price = latest.a // 成行で買う=askの価格で買ったことにする
-      const payment:number = latest.a * amount;
-      console.log("Buy:", pair, "for", this.average_price, "*", amount, "=", payment, "yen");
+      this.amount  = amount;
+      this.payment = Math.ceil(latest.a * amount); // 成行で買う=askの価格で買ったことにする
+      console.log(dateFormat(new Date()), pair, "Buy for", latest.a, "*", this.amount, "=", this.payment, "yen");
     }
     return Promise.resolve();
   }
@@ -269,11 +274,11 @@ class Agents{
     // 取得できたら、結果を元に最高評価のエージェントを本番用にセットする
     return Promise.all(promises)
       .then((results:any[]) => {
-        for(let result of results){
-          console.log("profit:", result.param, this.pair, result.profit);
-        }
         let maxProfitAgent = results.reduce((x, y) => { return x.profit > y.profit ? x : y; });
-        console.log("max: ", maxProfitAgent.param, maxProfitAgent.profit);
+        for(let result of results){
+          const isMax:string = result.param == maxProfitAgent.param ? "(max)" : "";
+          console.log(dateFormat(new Date()), this.pair, "profit:", result.param, result.profit, isMax);
+        }
       })
       .catch((err) => {
         console.log(err);
