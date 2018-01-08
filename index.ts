@@ -14,6 +14,10 @@ function dateFormat(now){
   return Y + "/" + M + "/" + D + " " + h + ":" + m + ":" + s;
 }
 
+function datelog(){
+  return dateFormat(new Date())
+}
+
 // zaifに接続する
 var config = JSON.parse(fs.readFileSync('./config.json'));
 var apiPri = zaif.createPrivateApi(config.apikey, config.secretkey, 'user agent is node-zaif');
@@ -200,7 +204,7 @@ class Agent{
         // 成行で売る=bidの価格で売ったことにする
         const receive:number = Math.floor(latest.b * this.amount);
         const profit:number  = receive - this.payment;
-        console.log(dateFormat(new Date()), pair, "Sell for", latest.b, "yen *", this.amount, "(profit", profit, ")");
+        console.log(`${datelog()}\t${pair}\t${JSON.stringify(this.param)}\tSell for ${latest.b} yen * ${this.amount} (profit ${profit})`);
         // 結果をデータベースに記録する
         return scoreDB.insert(pair, this.param, receive, this.payment)
           .then(() => {
@@ -227,7 +231,7 @@ class Agent{
       if (buy && (amount > 0)){
         this.amount  = amount;
         this.payment = Math.ceil(latest.a * amount); // 成行で買う=askの価格で買ったことにする
-        console.log(dateFormat(new Date()), pair, "Buy for", latest.a, "*", this.amount, "=", this.payment, "yen");
+        console.log(`${datelog()}\t${pair}\t${JSON.stringify(this.param)}\tBuy for ${latest.a} * ${this.amount} = ${this.payment} yen`);
       }
     }
     return Promise.resolve();
@@ -280,18 +284,13 @@ class Agents{
       .then((results:any[]) => {
         let maxProfitAgent = results.reduce((x, y) => { return x.profit > y.profit ? x : y; });
         for(let result of results){
-          const isMax:string = result.param == maxProfitAgent.param ? "(max)" : "";
-          console.log(dateFormat(new Date()), this.pair, "profit:", result.param, result.profit, isMax);
+          const best:string = result.param == maxProfitAgent.param ? "(best)" : "";
+          console.log(`${datelog()}\t${this.pair}\t${JSON.stringify(result.param)}\tprofit:${result.profit}\t${best}`);
         }
       })
       .catch((err) => {
         console.log(err);
       });
-  }
-
-  // 1エージェントの取引成績を計算するpromise
-  // agentと成績=profitのペアを返す
-  calcScore(pair:string, param:AgentParam) {
   }
 }
 
@@ -347,8 +346,8 @@ class CCWatch{
       promiseRequestGet("https://api.zaif.jp/api/1/ticker/" + pairstr)
         .then((body:string) => {
           const ticker = JSON.parse(body);
-
-          console.log(dateFormat(new Date()), pairstr, ": ask=" + ticker.ask, ", bid=" + ticker.bid);
+          const ratio:number = ticker.ask / ticker.bid;
+          console.log(`${datelog()}\t${pairstr}\task=${ticker.ask}\tbid=${ticker.bid}\t(${ratio})`);
 
           // 買う場合の購入数量を決める
           amount = calcAmount(ticker.ask, AMOUNT, pair.item_unit_min, pair.item_unit_step);
