@@ -54,7 +54,7 @@ class PriceDB{
     });
   }
 }
-var prices = new PriceDB('data/database.db');
+var priceDB = new PriceDB('data/price.db');
 
 // 異なる判断規準で取引をするエージェント達のシミュレーション取引の結果を記録するDBのラッパー
 // 非同期処理はpromise化しておく/findとinsertをこの機能に合わせた引数定義にする
@@ -93,7 +93,7 @@ class ScoreDB{
     });
   }
 }
-var scores = new ScoreDB('data/score.db');
+var scoreDB = new ScoreDB('data/score.db');
 
 
 const DAYS4SCORING:number = 7; // 何日前までの取引履歴を成績として使うか
@@ -186,52 +186,56 @@ class Agent{
   }
 
   // 買っている場合->買い増すか売るか何もしないか)
-  trySell(pair:string, latest:any, records:any){
+  trySell(pair:string, latest:any, prices:any){
     // bidの価格を使って2つの移動平均線を作り、その短い方が高い値段になっているかを調べる
-    const bas:number = this.param.bas;
-    const bal:number = this.param.bal;
-    const bids:number[] = records.slice(0, bal).map((r) => r.b); // bidの価格を使う
-    const avgShort:number = bids.slice(0, bas).reduce((x,y) => x+y) / bas;
-    const avgLong:number  = bids              .reduce((x,y) => x+y) / bal;
-    const sell:boolean = avgShort <= avgLong;
+    if (prices.length >= this.param.bal){
+      const bas:number = this.param.bas;
+      const bal:number = this.param.bal;
+      const bids:number[] = prices.slice(0, bal).map((r) => r.b); // bidの価格を使う
+      const avgShort:number = bids.slice(0, bas).reduce((x,y) => x+y) / bas;
+      const avgLong:number  = bids              .reduce((x,y) => x+y) / bal;
+      const sell:boolean = avgShort <= avgLong;
 
-    if (sell){
-      // 成行で売る=bidの価格で売ったことにする
-      const receive:number = Math.floor(latest.b * this.amount);
-      const profit:number  = receive - this.payment;
-      console.log(dateFormat(new Date()), pair, "Sell for", latest.b, "yen *", this.amount, "(profit", profit, ")");
-      // 結果をデータベースに記録する
-      return scores.insert(pair, this.param, receive, this.payment)
-        .then(() => {
-          this.amount  = 0; // 価格を初期化
-          this.payment = 0; // 価格を初期化
-          return;
-        })
+      if (sell){
+        // 成行で売る=bidの価格で売ったことにする
+        const receive:number = Math.floor(latest.b * this.amount);
+        const profit:number  = receive - this.payment;
+        console.log(dateFormat(new Date()), pair, "Sell for", latest.b, "yen *", this.amount, "(profit", profit, ")");
+        // 結果をデータベースに記録する
+        return scoreDB.insert(pair, this.param, receive, this.payment)
+          .then(() => {
+            this.amount  = 0; // 価格を初期化
+            this.payment = 0; // 価格を初期化
+            return;
+          })
+      }
     }
     return Promise.resolve();
   }
 
   // 買ってない場合->買うか何もしないか
-  tryBuy(pair:string, latest:any, records:any, amount:number){
+  tryBuy(pair:string, latest:any, prices:any, amount:number){
     // askの価格を使って2つの移動平均線を作り、その短い方が高い値段になっているかを調べる
-    const aas:number = this.param.aas;
-    const aal:number = this.param.aal;
-    const asks:number[] = records.slice(0, aal).map((r) => r.a); // askの価格を使う
-    const avgShort:number = asks.slice(0, aas).reduce((x,y) => x+y) / aas;
-    const avgLong:number  = asks              .reduce((x,y) => x+y) / aal;
-    const buy:boolean = avgShort >= avgLong;
+    if (prices.length >= this.param.aal){
+      const aas:number = this.param.aas;
+      const aal:number = this.param.aal;
+      const asks:number[] = prices.slice(0, aal).map((r) => r.a); // askの価格を使う
+      const avgShort:number = asks.slice(0, aas).reduce((x,y) => x+y) / aas;
+      const avgLong:number  = asks              .reduce((x,y) => x+y) / aal;
+      const buy:boolean = avgShort >= avgLong;
 
-    if (buy && (amount > 0)){
-      this.amount  = amount;
-      this.payment = Math.ceil(latest.a * amount); // 成行で買う=askの価格で買ったことにする
-      console.log(dateFormat(new Date()), pair, "Buy for", latest.a, "*", this.amount, "=", this.payment, "yen");
+      if (buy && (amount > 0)){
+        this.amount  = amount;
+        this.payment = Math.ceil(latest.a * amount); // 成行で買う=askの価格で買ったことにする
+        console.log(dateFormat(new Date()), pair, "Buy for", latest.a, "*", this.amount, "=", this.payment, "yen");
+      }
     }
     return Promise.resolve();
   }
 
   // 新しい価格リストを受け取って、売り買いの判断をつける
-  update(pair:string, latest:any, records:any, amount:number){
-    return this.has() ? this.trySell(pair, latest, records) : this.tryBuy(pair, latest, records, amount);
+  update(pair:string, latest:any, prices:any, amount:number){
+    return this.has() ? this.trySell(pair, latest, prices) : this.tryBuy(pair, latest, prices, amount);
   }
 }
 
@@ -251,20 +255,20 @@ class Agents{
     return (this.active_index != null) && this.agents[this.active_index].has();
   }
 
-  update(latest, records, amount:number){
-    if(records.length == 0 || this.agents.length == 0) return;
+  update(latest, prices, amount:number){
+    if(this.agents.length == 0) return;
 
     // 各エージェントで取引処理を動かす -> 成績を調べる
     let promises = this.agents.map((agent) => {
       // シミュレーション取引用のエージェントを動かす
-      return agent.update(this.pair, latest, records, amount)
+      return agent.update(this.pair, latest, prices, amount)
         .then(() => {
           // 過去も含む取引成績をDBから非同期で取得する
-          return scores.find(this.pair, agent.param)
+          return scoreDB.find(this.pair, agent.param)
         })
-        .then((records:any[]) => {
+        .then((scores:any[]) => {
           // 各scoreの損益を足し込む
-          const profits = records.map((x) => {return x.s - x.b;}); // レコードごとの損益
+          const profits = scores.map((x) => {return x.s - x.b;}); // レコードごとの損益
           const profit  = profits.reduce((x, y) => { return x + y}, 0); // レコード全体の損益合計
 
           return {param:agent.param, profit:profit};
@@ -349,18 +353,18 @@ class CCWatch{
           // 買う場合の購入数量を決める
           amount = calcAmount(ticker.ask, AMOUNT, pair.item_unit_min, pair.item_unit_step);
           // DBに登録する
-          return prices.insert(pairstr, ticker);
+          return priceDB.insert(pairstr, ticker);
         })
-        .then((record) => {
-          latest = record;
+        .then((price) => {
+          latest = price;
           // これまでの価格履歴を取得する
-          return prices.find(pairstr);
+          return priceDB.find(pairstr);
         })
-        .then((records:any[]) => {
-          // 日付順にrecordsをソートしておく
-          records.sort((x,y) => {return y.d - x.d});
+        .then((prices:any[]) => {
+          // 日付順にpricesをソートしておく
+          prices.sort((x,y) => {return y.d - x.d});
           // 各エージェントに判断を仰ぐ
-          return this.agents[pairstr].update(latest, records, amount);
+          return this.agents[pairstr].update(latest, prices, amount);
         })
         .catch((error) => {
           console.log("ERROR: update", error);
