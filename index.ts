@@ -151,18 +151,24 @@ function calcAmount(ask:number, yen:number, unitMin:number, unitStep:number){
   }
 }
 
+
+//- aas: ask average short: 買う時の移動平均線の短い方の個数 (3)
+//- aal: ask average long: 買う時の移動平均線の長い方の個数 (10)
+//- bas: bid average short: 売る時の移動平均線の短い方の個数 (3)
+//- bal: bid average long: 売る時の移動平均線の長い方の個数 (10)
+//- acr: ask to current raito: 購入価格に対する現在bid価格の比率, これを下回ると強制損切り (0.95)
+//- spr: spread: 許容するask/bid値, これを下回らないと買わない (1.01)
+interface AgentParam { [key:string]: number; }
+function AgentParam_make(aas:number, aal:number, bas:number, bal:number, acr:number, spr:number){
+  let obj:AgentParam = {aas:aas, aal:aal, bas:bas, bal:bal, acr:acr, spr:spr};
+  return obj;
+}
+
 // 自分のパラメータに基づいて判断をして売り買いを実行する
 // (買ってない場合->買うか何もしないか、買っている場合->買い増すか売るか何もしないか)
 // 移動平均など売り買いに必要な判断をつける
 // 判断に基づいて売り買いを実行する
 // 通知を入れる
-interface AgentParam { [key:string]: number; }
-function AgentParam_make(ass:number, aal:number, bas:number, bal:number, acr:number, spr:number){
-  let obj:AgentParam = {ass:ass, aal:aal, bas:bas, bal:bal, acr:acr, spr:spr};
-  return obj;
-}
-
-
 class Agent{
   average_price: number; // 買い付けている時の買い付け価格
   param: AgentParam; // 自動売買の判断基準パラメータ
@@ -179,7 +185,14 @@ class Agent{
 
   // 買っている場合->買い増すか売るか何もしないか)
   trySell(pair:string, latest:any, records:any){
-    const sell:boolean = true
+    // bidの価格を使って2つの移動平均線を作り、その短い方が高い値段になっているかを調べる
+    const bas:number = this.param.bas;
+    const bal:number = this.param.bal;
+    const bids:number[] = records.slice(0, bal).map((r) => r.b); // bidの価格を使う
+    const avgShort:number = bids.slice(0, bas).reduce((x,y) => x+y) / bas;
+    const avgLong:number  = bids              .reduce((x,y) => x+y) / bal;
+    const sell:boolean = avgShort <= avgLong;
+
     if (sell){
       // 成行で売る=bidの価格で売ったことにする
       console.log("Sell:", pair, "for", latest.b, "yen from", this.average_price, "yen");
@@ -193,9 +206,16 @@ class Agent{
     return Promise.resolve();
   }
 
+  // 買ってない場合->買うか何もしないか
   tryBuy(pair:string, latest:any, records:any, amount:number){
-    // 買ってない場合->買うか何もしないか
-    const buy:boolean = true
+    // askの価格を使って2つの移動平均線を作り、その短い方が高い値段になっているかを調べる
+    const aas:number = this.param.aas;
+    const aal:number = this.param.aal;
+    const asks:number[] = records.slice(0, aal).map((r) => r.a); // askの価格を使う
+    const avgShort:number = asks.slice(0, aas).reduce((x,y) => x+y) / aas;
+    const avgLong:number  = asks              .reduce((x,y) => x+y) / aal;
+    const buy:boolean = avgShort >= avgLong;
+
     if (buy && (amount > 0)){
       this.average_price = latest.a // 成行で買う=askの価格で買ったことにする
       const payment:number = latest.a * amount;
@@ -219,7 +239,7 @@ class Agents{
   constructor(pair: string){
     this.pair   = pair;
     this.active_index = null;
-    this.agents = [new Agent(pair, AgentParam_make(0,0,0,0,0,0))];
+    this.agents = [new Agent(pair, AgentParam_make(1,1,1,1,0,0)), new Agent(pair, AgentParam_make(3,15,3,15,0,0))];
   }
 
   has(): boolean{
@@ -331,7 +351,9 @@ class CCWatch{
           // これまでの価格履歴を取得する
           return prices.find(pairstr);
         })
-        .then((records) => {
+        .then((records:any[]) => {
+          // 日付順にrecordsをソートしておく
+          records.sort((x,y) => {return y.d - x.d});
           // 各エージェントに判断を仰ぐ
           return this.agents[pairstr].update(latest, records, amount);
         })
