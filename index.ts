@@ -136,7 +136,7 @@ function promiseRequestGet(uri:string){
       if (!error && response.statusCode == 200) {
         resolve(body);
       } else {
-        reject({error: error, status: response.statusCode});
+        reject(error);
       }
     });
   });
