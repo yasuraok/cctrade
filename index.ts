@@ -236,10 +236,10 @@ class Agents{
   agents: Agent[];
   pair: string;
 
-  constructor(pair: string){
+  constructor(pair: string, params:AgentParam[]){
     this.pair   = pair;
     this.active_index = null;
-    this.agents = [new Agent(pair, AgentParam_make(1,1,1,1,0,0)), new Agent(pair, AgentParam_make(3,15,3,15,0,0))];
+    this.agents = params.map((param) => new Agent(pair, param));
   }
 
   has(): boolean{
@@ -298,7 +298,7 @@ class CCWatch{
   }
 
   // zaifで現在扱っている通貨ペアのリストを取得してコールバックを呼ぶ
-  start(): void{
+  start(params:AgentParam[]): void{
     promiseRequestGet("https://api.zaif.jp/api/1/currency_pairs/all")
       .then((body:string) => {
         // 通貨ペア一覧からJPYのものだけを取り出す
@@ -314,7 +314,7 @@ class CCWatch{
         for(let pair of this.pairs){
           let pairstr: string = pair.currency_pair;
           if(! (pairstr in this.agents)){
-            this.agents[pairstr] = new Agents(pairstr);
+            this.agents[pairstr] = new Agents(pairstr, params);
           }
         }
 
@@ -373,9 +373,9 @@ class CCWatch{
 
 
 check();
-// notify2ifttt();
-// currencies_all();
 
 var ccw:CCWatch = new CCWatch();
+//var params = [AgentParam_make(1,1,1,1,0,0), AgentParam_make(3,15,3,15,0,0)];
+var params = JSON.parse(fs.readFileSync('./parameter.json', 'utf8'));
 
-ccw.start();
+ccw.start(params);

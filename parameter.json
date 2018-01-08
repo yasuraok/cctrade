@@ -1,0 +1,10 @@
+[
+  {"aas": 1,  "aal": 1,  "bas": 1,  "bal": 1,  "acr": 0, "spr": 0},
+  {"aas": 3,  "aal": 15, "bas": 3,  "bal": 15, "acr": 0, "spr": 0},
+  {"aas": 3,  "aal": 15, "bas": 10, "bal": 30, "acr": 0, "spr": 0},
+  {"aas": 10, "aal": 30, "bas": 3,  "bal": 15, "acr": 0, "spr": 0},
+  {"aas": 10, "aal": 30, "bas": 10, "bal": 30, "acr": 0, "spr": 0},
+  {"aas": 10, "aal": 30, "bas": 15, "bal": 60, "acr": 0, "spr": 0},
+  {"aas": 15, "aal": 60, "bas": 10, "bal": 30, "acr": 0, "spr": 0},
+  {"aas": 15, "aal": 60, "bas": 15, "bal": 60, "acr": 0, "spr": 0}
+]
