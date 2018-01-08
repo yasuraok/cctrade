@@ -245,18 +245,18 @@ class Agent{
 
 // ある通貨ペアについて、上のAgentを設定違いで複数個もって取引をシミュレートし、最適なものを実際の取引に使う
 class Agents{
-  active_index: number; // nullable
   agents: Agent[];
   pair: string;
+  realAgent: Agent;
 
   constructor(pair: string, params:AgentParam[]){
     this.pair   = pair;
-    this.active_index = null;
     this.agents = params.map((param) => new Agent(pair, param));
+    this.realAgent = null; // 実際に取引に使うエージェント
   }
 
   has(): boolean{
-    return (this.active_index != null) && this.agents[this.active_index].has();
+    return (this.realAgent != null);
   }
 
   update(latest, prices, amount:number){
@@ -282,11 +282,26 @@ class Agents{
     // 取得できたら、結果を元に最高評価のエージェントを本番用にセットする
     return Promise.all(promises)
       .then((results:any[]) => {
-        let maxProfitAgent = results.reduce((x, y) => { return x.profit > y.profit ? x : y; });
+        let bestAgent = results.reduce((x, y) => { return x.profit > y.profit ? x : y; });
         for(let result of results){
-          const best:string = result.param == maxProfitAgent.param ? "(best)" : "";
+          const best:string = result.param == bestAgent.param ? "(best)" : "";
           console.log(`${datelog()}\t${this.pair}\t${JSON.stringify(result.param)}\tprofit:${result.profit}\t${best}`);
         }
+
+        // 本番エージェントが不在または取引中でなければ、エージェントの交換を試みる
+        if(this.realAgent == null || (! this.realAgent.has())){
+          if(bestAgent.profit >= 0){
+            this.realAgent = new Agent(this.pair, bestAgent.param);
+          } else {
+            this.realAgent = null; // 全員成績が悪い時はお休み
+          }
+        }
+
+        // 本番エージェントを稼働
+        if(this.realAgent != null){
+          return this.realAgent.update(this.pair, latest, prices, amount);
+        }
+
       })
       .catch((err) => {
         console.log(err);
