@@ -3,6 +3,7 @@ var request   = require('request');
 var zaif      = require('zaif.jp');
 var Datastore = require('nedb');
 var decimal   = require('decimal');
+var Realm     = require('realm');
 
 function dateFormat(now){
   const Y = now.getFullYear();
@@ -24,37 +25,43 @@ var apiPri = zaif.createPrivateApi(config.apikey, config.secretkey, 'user agent 
 
 // 価格情報のDBのラッパー
 // 非同期処理はpromise化しておく/findとinsertをこの機能に合わせた引数定義にする
+const SCHEMA = {
+  name: 'price',         // オブジェクト名
+  properties: {          // オブジェクトスキーマの定義
+      pair: 'string',
+      date: 'date',
+      ask: 'double',
+      bid: 'double'
+  }
+}
+
 class PriceDB{
   private db;
   constructor(filename:string){
-    this.db = new Datastore({filename: filename, autoload: true});
+    this.db = new Realm({path: filename, schema: [SCHEMA]});
   }
 
   // 価格情報の1レコードを作成して格納する
   insert(pair:string, ticker){
     return new Promise((resolve, reject) => {
-      const record = {p: pair, d:new Date().getTime(), a: ticker.ask, b:ticker.bid}; // pair/date/ask/bid
-      this.db.insert(record, (err) => {
-        if (err == null) {
-          resolve(record);
-        } else {
-          reject(err);
-        }
+      const record = {pair: pair, date:new Date(), ask: ticker.ask, bid:ticker.bid}; // pair/date/ask/bid
+      this.db.write(() => {
+        // オブジェクト登録
+        this.db.create(SCHEMA.name, record);
+        resolve(record);
       });
     });
   }
 
-  // 価格一覧を取得する
+  // 価格一覧を取得する(新しい順にソートしておく)
   find(pair:string){
     return new Promise((resolve, reject) => {
-      const query = {p: pair};
-      this.db.find(query, (err, records) => {
-        if (err == null) {
-          resolve(records);
-        } else {
-          reject(err);
-        }
-      });
+      let all    = this.db.objects(SCHEMA.name);
+      let results = all.filtered("pair == $0", pair).sorted('date', true);
+      // results.forEach((val, key) => {
+      //   console.log(`${val.pair}, ${dateFormat(val.date)}, ${val.ask}, ${val.bid}`);
+      // });
+      resolve(results);
     });
   }
 }
@@ -196,16 +203,16 @@ class Agent{
     if (prices.length >= this.param.bal){
       const bas:number = this.param.bas;
       const bal:number = this.param.bal;
-      const bids:number[] = prices.slice(0, bal).map((r) => r.b); // bidの価格を使う
+      const bids:number[] = prices.slice(0, bal).map((r) => r.bid); // bidの価格を使う
       const avgShort:number = bids.slice(0, bas).reduce((x,y) => x+y) / bas;
       const avgLong:number  = bids              .reduce((x,y) => x+y) / bal;
       const sell:boolean = avgShort <= avgLong;
 
       if (sell){
         // 成行で売る=bidの価格で売ったことにする
-        const receive:number = Math.floor(latest.b * this.amount);
+        const receive:number = Math.floor(latest.bid * this.amount);
         const profit:number  = receive - this.payment;
-        console.log(`${datelog()}\t${pair}\t${JSON.stringify(this.param)}\tSell for ${latest.b} yen * ${this.amount} (profit ${profit})`);
+        console.log(`${datelog()}\t${pair}\t${JSON.stringify(this.param)}\tSell for ${latest.bid} yen * ${this.amount} (profit ${profit})`);
         // 結果をデータベースに記録する
         return scoreDB.insert(pair, this.param, receive, this.payment)
           .then(() => {
@@ -224,19 +231,19 @@ class Agent{
     if (prices.length >= this.param.aal){
       const aas:number = this.param.aas;
       const aal:number = this.param.aal;
-      const asks:number[] = prices.slice(0, aal).map((r) => r.a); // askの価格を使う
+      const asks:number[] = prices.slice(0, aal).map((r) => r.ask); // askの価格を使う
       const avgShort:number = asks.slice(0, aas).reduce((x,y) => x+y) / aas;
       const avgLong:number  = asks              .reduce((x,y) => x+y) / aal;
 
-      const isSpreadSmall:boolean = (latest.a / latest.b) <= this.param.spr;
-      console.log("SPREAD:", latest.a, latest.b, latest.a / latest.b, this.param.spr)
+      const isSpreadSmall:boolean = (latest.ask / latest.bid) <= this.param.spr;
+      console.log("SPREAD:", latest.ask, latest.bid, latest.ask / latest.bid, this.param.spr)
       const isAskRatioLarge:boolean = (avgShort / avgLong) >= this.param.ath;
       console.log("ASKRATIO:", avgShort, avgLong, avgShort / avgLong, this.param.ath)
 
       if (isSpreadSmall && isAskRatioLarge && (amount > 0)){
         this.amount  = amount;
-        this.payment = Math.ceil(latest.a * amount); // 成行で買う=askの価格で買ったことにする
-        console.log(`${datelog()}\t${pair}\t${JSON.stringify(this.param)}\tBuy for ${latest.a} * ${this.amount} = ${this.payment} yen`);
+        this.payment = Math.ceil(latest.ask * amount); // 成行で買う=askの価格で買ったことにする
+        console.log(`${datelog()}\t${pair}\t${JSON.stringify(this.param)}\tBuy for ${latest.ask} * ${this.amount} = ${this.payment} yen`);
       }
     }
     return Promise.resolve();
@@ -380,8 +387,6 @@ class CCWatch{
           return priceDB.find(pairstr);
         })
         .then((prices:any[]) => {
-          // 日付順にpricesをソートしておく
-          prices.sort((x,y) => {return y.d - x.d});
           // 各エージェントに判断を仰ぐ
           return this.agents[pairstr].update(latest, prices, amount);
         })
