@@ -4,6 +4,7 @@ var zaif      = require('zaif.jp');
 var Datastore = require('nedb');
 var decimal   = require('decimal');
 var Realm     = require('realm');
+var yargs     = require('yargs');
 
 function dateFormat(now){
   const Y = now.getFullYear();
@@ -182,11 +183,13 @@ function AgentParam_make(aas:number, aal:number, ath:number, bas:number, bal:num
 // 判断に基づいて売り買いを実行する
 // 通知を入れる
 class Agent{
+  pair: string;
   amount: number;  // 買い付けている時の買い付け量
   payment: number; // 買い付けている時の支払い総額
   param: AgentParam; // 自動売買の判断基準パラメータ
 
   constructor(pair: string, param: AgentParam){
+    this.pair    = pair;
     this.param   = param;
     this.amount  = 0;
     this.payment = 0;
@@ -198,7 +201,7 @@ class Agent{
   }
 
   // 買っている場合->買い増すか売るか何もしないか)
-  trySell(pair:string, latest:any, prices:any){
+  trySell(latest:any, prices:any){
     // bidの価格を使って2つの移動平均線を作り、その短い方が高い値段になっているかを調べる
     if (prices.length >= this.param.bal){
       const bas:number = this.param.bas;
@@ -212,9 +215,9 @@ class Agent{
         // 成行で売る=bidの価格で売ったことにする
         const receive:number = Math.floor(latest.bid * this.amount);
         const profit:number  = receive - this.payment;
-        console.log(`${datelog()}\t${pair}\t${JSON.stringify(this.param)}\tSell for ${latest.bid} yen * ${this.amount} (profit ${profit})`);
+        console.log(`${datelog()}\t${this.pair}\t${JSON.stringify(this.param)}\tSell for ${latest.bid} yen * ${this.amount} (profit ${profit})`);
         // 結果をデータベースに記録する
-        return scoreDB.insert(pair, this.param, receive, this.payment)
+        return scoreDB.insert(this.pair, this.param, receive, this.payment)
           .then(() => {
             this.amount  = 0; // 価格を初期化
             this.payment = 0; // 価格を初期化
@@ -226,7 +229,7 @@ class Agent{
   }
 
   // 買ってない場合->買うか何もしないか
-  tryBuy(pair:string, latest:any, prices:any, amount:number){
+  tryBuy(latest:any, prices:any, amount:number){
     // askの価格を使って2つの移動平均線を作り、その短い方が高い値段になっているかを調べる
     if (prices.length >= this.param.aal){
       const aas:number = this.param.aas;
@@ -243,15 +246,15 @@ class Agent{
       if (isSpreadSmall && isAskRatioLarge && (amount > 0)){
         this.amount  = amount;
         this.payment = Math.ceil(latest.ask * amount); // 成行で買う=askの価格で買ったことにする
-        console.log(`${datelog()}\t${pair}\t${JSON.stringify(this.param)}\tBuy for ${latest.ask} * ${this.amount} = ${this.payment} yen`);
+        console.log(`${datelog()}\t${this.pair}\t${JSON.stringify(this.param)}\tBuy for ${latest.ask} * ${this.amount} = ${this.payment} yen`);
       }
     }
     return Promise.resolve();
   }
 
   // 新しい価格リストを受け取って、売り買いの判断をつける
-  update(pair:string, latest:any, prices:any, amount:number){
-    return this.has() ? this.trySell(pair, latest, prices) : this.tryBuy(pair, latest, prices, amount);
+  update(latest:any, prices:any, amount:number){
+    return this.has() ? this.trySell(latest, prices) : this.tryBuy(latest, prices, amount);
   }
 }
 
@@ -277,7 +280,7 @@ class Agents{
     // 各エージェントで取引処理を動かす -> 成績を調べる
     let promises = this.agents.map((agent) => {
       // シミュレーション取引用のエージェントを動かす
-      return agent.update(this.pair, latest, prices, amount)
+      return agent.update(latest, prices, amount)
         .then(() => {
           // 過去も含む取引成績をDBから非同期で取得する
           return scoreDB.find(this.pair, agent.param)
@@ -311,7 +314,7 @@ class Agents{
 
         // 本番エージェントを稼働
         if(this.realAgent != null){
-          return this.realAgent.update(this.pair, latest, prices, amount);
+          return this.realAgent.update(latest, prices, amount);
         }
 
       })
@@ -324,6 +327,84 @@ class Agents{
 
 
 class CCWatch{
+  readonly interval = 60 * 1000; // 監視タイム
+
+  pairs: any;
+  agent: Agent;
+  constructor(){
+    this.agent = null;
+  }
+
+  // zaifで現在扱っている通貨ペアのリストを取得してコールバックを呼ぶ
+  start(params:AgentParam[]): void{
+    promiseRequestGet("https://api.zaif.jp/api/1/currency_pairs/all")
+      .then((body:string) => {
+        // 通貨ペア一覧からJPYのものだけを取り出す
+        // "公開情報APIのcurrency_pairsで取得できるevent_numberが0であるものが指定できます" とのことなので
+        // それもフィルタリングする
+        this.pairs = JSON.parse(body).filter((element) => {
+          const isJpy    = element.currency_pair.match("jpy");
+          const isActive = element.event_number == 0;
+          return isJpy && isActive;
+        });
+
+        // 見つかった通貨ペアごとにエージェントを用意する
+        for(let pair of this.pairs){
+          let pairstr: string = pair.currency_pair;
+          this.agent = new Agent(pairstr, params[0]);
+        }
+
+        // 監視スタート
+        this.watch();
+      })
+      .catch((error) => {
+        console.log("ERROR: promiseRequestGet", error);
+      });
+  }
+
+  // 現在価格を取得して場合によっては取引する
+  update(){
+    for(let pair of this.pairs){
+      let pairstr:string = pair.currency_pair;
+
+      // 1. 価格を取得する
+      // 本当はdepthを見てスプレッドを見た方がいい
+      promiseRequestGet("https://api.zaif.jp/api/1/ticker/" + pairstr)
+        .then((body:string) => {
+          const ticker = JSON.parse(body);
+          const ratio:number = ticker.ask / ticker.bid;
+          console.log(`${datelog()}\t${pairstr}\task=${ticker.ask}\tbid=${ticker.bid}\t(${ratio})`);
+
+          // DBに登録する
+          return priceDB.insert(pairstr, ticker);
+        })
+        .then((price) => {
+          // これまでの価格履歴を取得する
+          return priceDB.find(pairstr);
+        })
+        .then((prices:any[]) => {
+          // 買う場合の購入数量を決める
+          let latest = prices[0];
+          let amount = calcAmount(latest.ask, AMOUNT, pair.item_unit_min, pair.item_unit_step);
+          // エージェントに判断を仰ぐ
+          return this.agent.update(latest, prices, amount);
+        })
+        .catch((error) => {
+          console.log("ERROR: update", error);
+          notify2ifttt("error: ticker, " + pairstr);
+        });
+    }
+  }
+
+  // 定期的に実行
+  watch(): void{
+    this.update()
+    setInterval(() => {this.update()}, this.interval);
+  }
+}
+
+
+class CCOptimize{
   readonly interval = 60 * 1000; // 監視タイム
 
   pairs: any;
@@ -365,30 +446,18 @@ class CCWatch{
   update(){
     for(let pair of this.pairs){
       let pairstr:string = pair.currency_pair;
-      let amount:number = 0; // promise内で代入
-      let latest:any;        // 最新価格: promise内で代入
 
       // 1. 価格を取得する
-      // 本当はdepthを見てスプレッドを見た方がいい
-      promiseRequestGet("https://api.zaif.jp/api/1/ticker/" + pairstr)
-        .then((body:string) => {
-          const ticker = JSON.parse(body);
-          const ratio:number = ticker.ask / ticker.bid;
-          console.log(`${datelog()}\t${pairstr}\task=${ticker.ask}\tbid=${ticker.bid}\t(${ratio})`);
-
-          // 買う場合の購入数量を決める
-          amount = calcAmount(ticker.ask, AMOUNT, pair.item_unit_min, pair.item_unit_step);
-          // DBに登録する
-          return priceDB.insert(pairstr, ticker);
-        })
-        .then((price) => {
-          latest = price;
-          // これまでの価格履歴を取得する
-          return priceDB.find(pairstr);
-        })
+      priceDB.find(pairstr)
         .then((prices:any[]) => {
-          // 各エージェントに判断を仰ぐ
-          return this.agents[pairstr].update(latest, prices, amount);
+          if (prices.length > 0){
+            // 買う場合の購入数量を決める
+            let latest = prices[0];
+            let amount = calcAmount(latest.ask, AMOUNT, pair.item_unit_min, pair.item_unit_step);
+
+            // 各エージェントに判断を仰ぐ
+            return this.agents[pairstr].update(latest, prices, amount);
+          }
         })
         .catch((error) => {
           console.log("ERROR: update", error);
@@ -405,10 +474,25 @@ class CCWatch{
 }
 
 
+//==============================================================================
+// start
+//==============================================================================
+var argv = yargs
+    .help   ('h').alias('h', 'help')
+    .boolean('o').alias('o', 'optimize').default('o', false)
+    .argv;
+
 check();
 
-var ccw:CCWatch = new CCWatch();
-//var params = [AgentParam_make(1,1,1,1,0,0), AgentParam_make(3,15,3,15,0,0)];
-var params = JSON.parse(fs.readFileSync('./parameter.json', 'utf8'));
+if (argv.optimize){
+  // エージェント最適化用のプロセス
+  var cco:CCOptimize = new CCOptimize();
+  var params = JSON.parse(fs.readFileSync('./parameter.json', 'utf8'));
+  cco.start(params);
 
-ccw.start(params);
+} else {
+  // 価格取得&本番取引用のプロセス
+  var ccw:CCWatch = new CCWatch();
+  var params = JSON.parse(fs.readFileSync('./parameter.json', 'utf8'));
+  ccw.start(params);
+}

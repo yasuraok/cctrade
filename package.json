@@ -16,6 +16,7 @@
     "nedb": "^1.8.0",
     "realm": "^2.1.1",
     "request": "^2.83.0",
+    "yargs": "^10.1.1",
     "zaif.jp": "^0.1.16"
   },
   "devDependencies": {
