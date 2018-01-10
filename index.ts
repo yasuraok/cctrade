@@ -177,6 +177,29 @@ function AgentParam_make(aas:number, aal:number, ath:number, bas:number, bal:num
   return obj;
 }
 
+function makeRandomParam(){
+  const aas:number = Math.floor(Math.random()*100 + 1);
+  const aal:number = Math.floor(Math.random()*500 + 1);
+  const ath:number = 1.0 + (Math.random()-0.5) * 0.2;
+  const bas:number = Math.floor(Math.random()*100 + 1);
+  const bal:number = Math.floor(Math.random()*500 + 1);
+  const spr:number = 1.0 + Math.random() * 0.15;
+  return {aas:aas, aal:aal, ath:ath, bas:bas, bal:bal, spr:spr};
+}
+
+class ParamProfit{
+  param: AgentParam;
+  profit: number;
+  constructor(param:AgentParam, profit:number){
+    this.param  = param;
+    this.profit = profit;
+  }
+
+  toJSON(){
+    return {param:this.param, profit:this.profit};
+  }
+}
+
 // 自分のパラメータに基づいて判断をして売り買いを実行する
 // (買ってない場合->買うか何もしないか、買っている場合->買い増すか売るか何もしないか)
 // 移動平均など売り買いに必要な判断をつける
@@ -215,7 +238,7 @@ class Agent{
         // 成行で売る=bidの価格で売ったことにする
         const receive:number = Math.floor(latest.bid * this.amount);
         const profit:number  = receive - this.payment;
-        console.log(`${datelog()}\t${this.pair}\t${JSON.stringify(this.param)}\tSell for ${latest.bid} yen * ${this.amount} (profit ${profit})`);
+        // console.log(`${datelog()}\t${this.pair}\t${JSON.stringify(this.param)}\tSell for ${latest.bid} yen * ${this.amount} (profit ${profit})`);
         // 結果をデータベースに記録する
         return scoreDB.insert(this.pair, this.param, receive, this.payment)
           .then(() => {
@@ -246,7 +269,7 @@ class Agent{
       if (isSpreadSmall && isAskRatioLarge && (amount > 0)){
         this.amount  = amount;
         this.payment = Math.ceil(latest.ask * amount); // 成行で買う=askの価格で買ったことにする
-        console.log(`${datelog()}\t${this.pair}\t${JSON.stringify(this.param)}\tBuy for ${latest.ask} * ${this.amount} = ${this.payment} yen`);
+        // console.log(`${datelog()}\t${this.pair}\t${JSON.stringify(this.param)}\tBuy for ${latest.ask} * ${this.amount} = ${this.payment} yen`);
       }
     }
     return Promise.resolve();
@@ -284,18 +307,23 @@ class Agents{
           const profits = scores.map((x) => {return x.s - x.b;}); // レコードごとの損益
           const profit  = profits.reduce((x, y) => { return x + y}, 0); // レコード全体の損益合計
 
-          return {param:agent.param, profit:profit};
+          return new ParamProfit(agent.param, profit);
         })
     });
 
     // 取得できたら、結果を元に最高評価のエージェントを本番用にセットする
     return Promise.all(promises)
-      .then((results:any[]) => {
-        let bestAgent = results.reduce((x, y) => { return x.profit > y.profit ? x : y; });
-        for(let result of results){
-          const best:string = result.param == bestAgent.param ? "(best)" : "";
-          console.log(`${datelog()}\t${this.pair}\t${JSON.stringify(result.param)}\tprofit:${result.profit}\t${best}`);
-        }
+      .then((results:ParamProfit[]) => {
+        // エージェントを成績の高い順にソートしておく
+        results.sort((x, y) => {return y.profit - x.profit;});
+        let best = results[0];
+        console.log(`${datelog()}\t${this.pair}\t best=${JSON.stringify(best.param)}\tprofit:${best.profit}`);
+        // for(let result of results){
+        //   console.log(`${datelog()}\t${this.pair}\t${JSON.stringify(result.param)}\tprofit:${result.profit}`);
+        // }
+
+        // 成績順にソートしたエージェントを返してupdate終了
+        return results;
       })
       .catch((err) => {
         console.log(err);
@@ -403,24 +431,55 @@ class CCWatch{
 
 
 class CCOptimize{
-  agents: { [key: string]: Agents};
-  params: AgentParam[];
-  constructor(params:AgentParam[]){
-    this.params = params;
-    this.agents = {};
+  params: { [pair:string]: ParamProfit[]; }; // 通貨ペアごとにN個のエージェントパラメータ
+  constructor(){
+    this.params = {};
+  }
+
+  prepareParam(pairstr:string){
+    return new Promise((resolve, reject) => {
+      if(! (pairstr in this.params)){
+        fs.readFile(`parameter_${pairstr}.json`, (err, data) => {
+          if(err != null){
+            // ファイル存在しない -> 作る
+            this.params[pairstr] = [];
+            for(let i=0; i<10; ++i){
+              this.params[pairstr].push(new ParamProfit(makeRandomParam(), 0));
+            }
+          }else{
+            // ファイル存在 -> 読む
+            let params = JSON.parse(data).map((obj) => new ParamProfit(obj.param, obj.profit));
+            this.params[pairstr] = params;
+          }
+          resolve();
+        });
+      } else {
+        // 最良スコア以外を乱数で初期化
+        for(let i=0; i<this.params[pairstr].length; ++i){
+          this.params[pairstr][i] = new ParamProfit(makeRandomParam(), 0);
+        }
+        resolve();
+      }
+    });
   }
 
   // 最新の価格+履歴を元に取引シミュレーションを行い、エージェントのパラメータを学習する
   loop(){
+    // パラメータを取得もしくは生成する
     let pairs:any = JSON.parse(fs.readFileSync('pairs.json'));
 
     // 各エージェントで取引処理を動かす -> 成績を調べる
     let promises = pairs.map((pair) => {
       let pairstr:string = pair.currency_pair;
-      let agents:Agents  = new Agents(pairstr, this.params);
+      let agents:Agents; // promise中で初期化
 
-      // 1. 価格を取得する
-      return priceDB.find(pairstr)
+      return this.prepareParam(pairstr)
+        .then(() => {
+          agents = new Agents(pairstr, this.params[pairstr].map((pp) => pp.param));
+
+          // 1. 価格を取得する
+          return priceDB.find(pairstr);
+        })
         .then((prices:any[]) => {
 
           if (prices.length > 0){
@@ -430,7 +489,12 @@ class CCOptimize{
 
             // 各エージェントに判断を仰ぐ
             return agents.update(latest, prices, amount);
+          } else {
+            return this.params[pairstr]; // そのまま結果を返す
           }
+        })
+        .then((results:ParamProfit[]) => {
+          fs.writeFileSync(`parameter_${pairstr}.json`, JSON.stringify(results));
         })
         .catch((error) => {
           console.log("ERROR: optimize", error);
@@ -441,7 +505,9 @@ class CCOptimize{
     return Promise.all(promises)
     .then(() => {
       // 無限ループ
-      setImmediate(() => {this.loop();});
+      // setImmediate(() => {this.loop();});
+      setTimeout(() => {this.loop();}, 1000);
+
     });
   }
 
@@ -460,8 +526,8 @@ check();
 
 if (argv.optimize){
   // エージェント最適化用のプロセス
-  var params = JSON.parse(fs.readFileSync('./parameter.json', 'utf8'));
-  var cco:CCOptimize = new CCOptimize(params);
+  // var params = JSON.parse(fs.readFileSync('./parameter.json', 'utf8'));
+  var cco:CCOptimize = new CCOptimize();
   cco.loop();
 
 } else {
