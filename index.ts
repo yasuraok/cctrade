@@ -239,9 +239,9 @@ class Agent{
       const avgLong:number  = asks              .reduce((x,y) => x+y) / aal;
 
       const isSpreadSmall:boolean = (latest.ask / latest.bid) <= this.param.spr;
-      console.log("SPREAD:", latest.ask, latest.bid, latest.ask / latest.bid, this.param.spr)
+      // console.log("SPREAD:", latest.ask, latest.bid, latest.ask / latest.bid, this.param.spr)
       const isAskRatioLarge:boolean = (avgShort / avgLong) >= this.param.ath;
-      console.log("ASKRATIO:", avgShort, avgLong, avgShort / avgLong, this.param.ath)
+      // console.log("ASKRATIO:", avgShort, avgLong, avgShort / avgLong, this.param.ath)
 
       if (isSpreadSmall && isAskRatioLarge && (amount > 0)){
         this.amount  = amount;
@@ -262,16 +262,10 @@ class Agent{
 class Agents{
   agents: Agent[];
   pair: string;
-  realAgent: Agent;
 
   constructor(pair: string, params:AgentParam[]){
     this.pair   = pair;
     this.agents = params.map((param) => new Agent(pair, param));
-    this.realAgent = null; // 実際に取引に使うエージェント
-  }
-
-  has(): boolean{
-    return (this.realAgent != null);
   }
 
   update(latest, prices, amount:number){
@@ -302,21 +296,6 @@ class Agents{
           const best:string = result.param == bestAgent.param ? "(best)" : "";
           console.log(`${datelog()}\t${this.pair}\t${JSON.stringify(result.param)}\tprofit:${result.profit}\t${best}`);
         }
-
-        // 本番エージェントが不在または取引中でなければ、エージェントの交換を試みる
-        if(this.realAgent == null || (! this.realAgent.has())){
-          if(bestAgent.profit >= 0){
-            this.realAgent = new Agent(this.pair, bestAgent.param);
-          } else {
-            this.realAgent = null; // 全員成績が悪い時はお休み
-          }
-        }
-
-        // 本番エージェントを稼働
-        if(this.realAgent != null){
-          return this.realAgent.update(latest, prices, amount);
-        }
-
       })
       .catch((err) => {
         console.log(err);
@@ -330,9 +309,9 @@ class CCWatch{
   readonly interval = 60 * 1000; // 監視タイム
 
   pairs: any;
-  agent: Agent;
+  agents: { [key: string]: Agent };
   constructor(){
-    this.agent = null;
+    this.agents = {};
   }
 
   // zaifで現在扱っている通貨ペアのリストを取得してコールバックを呼ぶ
@@ -348,10 +327,14 @@ class CCWatch{
           return isJpy && isActive;
         });
 
+        // ファイルに書き出して、optimizerが見れるようにする
+        fs.writeFileSync('pairs.json', JSON.stringify(this.pairs));
+      })
+      .then(() => {
         // 見つかった通貨ペアごとにエージェントを用意する
         for(let pair of this.pairs){
           let pairstr: string = pair.currency_pair;
-          this.agent = new Agent(pairstr, params[0]);
+          this.agents[pairstr] = new Agent(pairstr, params[0]);
         }
 
         // 監視スタート
@@ -387,7 +370,22 @@ class CCWatch{
           let latest = prices[0];
           let amount = calcAmount(latest.ask, AMOUNT, pair.item_unit_min, pair.item_unit_step);
           // エージェントに判断を仰ぐ
-          return this.agent.update(latest, prices, amount);
+          return this.agents[pairstr].update(latest, prices, amount);
+
+          // // 本番エージェントが不在または取引中でなければ、エージェントの交換を試みる
+          // if(this.realAgent == null || (! this.realAgent.has())){
+          //   if(bestAgent.profit >= 0){
+          //     this.realAgent = new Agent(this.pair, bestAgent.param);
+          //   } else {
+          //     this.realAgent = null; // 全員成績が悪い時はお休み
+          //   }
+          // }
+          //
+          // // 本番エージェントを稼働
+          // if(this.realAgent != null){
+          //   return this.realAgent.update(latest, prices, amount);
+          // }
+
         })
         .catch((error) => {
           console.log("ERROR: update", error);
@@ -405,72 +403,48 @@ class CCWatch{
 
 
 class CCOptimize{
-  readonly interval = 60 * 1000; // 監視タイム
-
-  pairs: any;
   agents: { [key: string]: Agents};
-  constructor(){
+  params: AgentParam[];
+  constructor(params:AgentParam[]){
+    this.params = params;
     this.agents = {};
   }
 
-  // zaifで現在扱っている通貨ペアのリストを取得してコールバックを呼ぶ
-  start(params:AgentParam[]): void{
-    promiseRequestGet("https://api.zaif.jp/api/1/currency_pairs/all")
-      .then((body:string) => {
-        // 通貨ペア一覧からJPYのものだけを取り出す
-        // "公開情報APIのcurrency_pairsで取得できるevent_numberが0であるものが指定できます" とのことなので
-        // それもフィルタリングする
-        this.pairs = JSON.parse(body).filter((element) => {
-          const isJpy    = element.currency_pair.match("jpy");
-          const isActive = element.event_number == 0;
-          return isJpy && isActive;
-        });
+  // 最新の価格+履歴を元に取引シミュレーションを行い、エージェントのパラメータを学習する
+  loop(){
+    let pairs:any = JSON.parse(fs.readFileSync('pairs.json'));
 
-        // 見つかった通貨ペアごとにエージェントを用意する
-        for(let pair of this.pairs){
-          let pairstr: string = pair.currency_pair;
-          if(! (pairstr in this.agents)){
-            this.agents[pairstr] = new Agents(pairstr, params);
-          }
-        }
-
-        // 監視スタート
-        this.watch();
-      })
-      .catch((error) => {
-        console.log("ERROR: promiseRequestGet", error);
-      });
-  }
-
-  // 現在価格を取得して場合によっては取引する
-  update(){
-    for(let pair of this.pairs){
+    // 各エージェントで取引処理を動かす -> 成績を調べる
+    let promises = pairs.map((pair) => {
       let pairstr:string = pair.currency_pair;
+      let agents:Agents  = new Agents(pairstr, this.params);
 
       // 1. 価格を取得する
-      priceDB.find(pairstr)
+      return priceDB.find(pairstr)
         .then((prices:any[]) => {
+
           if (prices.length > 0){
             // 買う場合の購入数量を決める
             let latest = prices[0];
-            let amount = calcAmount(latest.ask, AMOUNT, pair.item_unit_min, pair.item_unit_step);
+            let amount:number = calcAmount(latest.ask, AMOUNT, pair.item_unit_min, pair.item_unit_step);
 
             // 各エージェントに判断を仰ぐ
-            return this.agents[pairstr].update(latest, prices, amount);
+            return agents.update(latest, prices, amount);
           }
         })
         .catch((error) => {
-          console.log("ERROR: update", error);
-          notify2ifttt("error: ticker, " + pairstr);
+          console.log("ERROR: optimize", error);
         });
-    }
+    });
+
+    // 取得できたら、結果を元に最高評価のエージェントを本番用にセットする
+    return Promise.all(promises)
+    .then(() => {
+      // 無限ループ
+      setImmediate(() => {this.loop();});
+    });
   }
 
-  // 定期的に実行
-  watch(): void{
-    this.update()
-    setInterval(() => {this.update()}, this.interval);
-  }
 }
 
 
@@ -486,13 +460,13 @@ check();
 
 if (argv.optimize){
   // エージェント最適化用のプロセス
-  var cco:CCOptimize = new CCOptimize();
   var params = JSON.parse(fs.readFileSync('./parameter.json', 'utf8'));
-  cco.start(params);
+  var cco:CCOptimize = new CCOptimize(params);
+  cco.loop();
 
 } else {
   // 価格取得&本番取引用のプロセス
-  var ccw:CCWatch = new CCWatch();
   var params = JSON.parse(fs.readFileSync('./parameter.json', 'utf8'));
+  var ccw:CCWatch = new CCWatch();
   ccw.start(params);
 }
