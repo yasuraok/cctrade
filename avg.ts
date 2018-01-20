@@ -93,7 +93,7 @@ export class Average{
   bidPtr:Link;
 
   // 新しい順に接続されている価格履歴リスト過去方向への移動平均価格を返せるオブジェクトを生成する
-  constructor(private priceLink:Link){
+  constructor(priceLink:Link){
     this.askAvgs = [priceLink.item.ask];
     this.askPtr = priceLink.next;
 
@@ -119,6 +119,14 @@ export class Average{
       this.bidPtr = this.bidPtr.next;
     }
     return this.bidAvgs[n>1 ? n-1 : 0];
+  }
+
+  getAsk(): number{
+    return this.getAskAvg(1);
+  }
+
+  getBid(): number{
+    return this.getBidAvg(1);
   }
 }
 

@@ -80,6 +80,10 @@ export class PriceDB{
       return;
     })
   }
+
+  latest(){
+    return {"ask": this.avgs[0].getAsk(), "bid": this.avgs[0].getBid()};
+  }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
