@@ -13,8 +13,10 @@ export class Link{
 
   // 自分の後ろに要素をつないで、後ろの要素を返す
   connect(nextItem:Link): Link{
-    this.next = nextItem;
-    nextItem.prev = this;
+    if(nextItem != null){
+      this.next = nextItem;
+      nextItem.prev = this;
+    }
     return nextItem;
   }
 
@@ -27,6 +29,35 @@ export class Link{
       this.prev = null;
     }
     return ret;
+  }
+
+  // 要素数を求める, オーダーN
+  get length(): number{
+    let len:number = 0;
+    for(let l:Link = this; l != null; l = l.next){
+      len += 1;
+    }
+    return len;
+  }
+
+  // arrayのmap関数と同じものをこのLinkでやる(結果はLinkでなくArray)
+  // funcに渡される引数はitemではなくLinkそのもの
+  map(func): any[]{
+    let mapped:any[] = [];
+    for(let l:Link = this; l != null; l = l.next){
+      mapped.push(func(l));
+    }
+    return mapped;
+  }
+
+  // 末端を探す
+  end(): Link{
+    for(let endL:Link = this; endL != null; endL = endL.next){
+      if(endL.next == null){
+        return endL;
+      }
+    }
+    return this;
   }
 
   static fromArray(items:any[]): Link{
@@ -43,13 +74,12 @@ export class Link{
   }
 
   static concat(a:Link, b:Link): Link{
-    for(let endA = a; endA != null; endA = endA.next){
-      if(endA.next == null){
-        endA.connect(b);
-        return a;
-      }
+    if (a == null) {
+      return b;
+    } else {
+      a.end().connect(b);
+      return a;
     }
-    return null;
   }
 }
 
@@ -127,6 +157,13 @@ describe('avg', function () {
       let l  = Link.concat(l1, l2);
       assert.equal(3, l.next.next.item);
       assert.equal(4, l.next.next.next.item);
+    })
+
+    it('test for Link::map', function(){
+      let l = Link.fromArray([1,2,3,4,5]);
+      let a = l.map((node) => node.item**2);
+      assert.equal(4,  a[1]);
+      assert.equal(16, a[3]);
     })
 
     it('test for Average class', function(){
