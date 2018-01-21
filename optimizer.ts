@@ -75,11 +75,11 @@ class CCOptimize{
   priceDB: PriceDB;
   constructor(private pairstr: string, private item_unit_min:number, private item_unit_step:number){
     this.params  = [];
-    this.priceDB = new PriceDB(`data/price_${this.pairstr}.db`);
+    this.priceDB = new PriceDB(`data/${this.pairstr}/price.db`);
   }
 
   filepath():string{
-    return `data/parameter_${this.pairstr}.json`;
+    return `data/${this.pairstr}/parameter.json`;
   }
 
   prepareParam(){
@@ -116,24 +116,28 @@ class CCOptimize{
         return this.prepareParam()
       })
       .then(() => {
-        // 買う場合の購入数量を決める
-        let amount:number = Util.calcAmount(this.priceDB.latest().ask, Util.AMOUNT, this.item_unit_min, this.item_unit_step);
+        let latest = this.priceDB.latest();
+        if (latest != null) {
+          // 買う場合の購入数量を決める
+          let amount:number = Util.calcAmount(this.priceDB.latest().ask, Util.AMOUNT, this.item_unit_min, this.item_unit_step);
 
-        // シミュレーションで取引を実行し、結果を収集する
-        let results = this.params.map((p) => Simulation.execute(p.param, this.priceDB, amount));
-        results.sort((x, y) => {return y.profit - x.profit;});
+          // シミュレーションで取引を実行し、結果を収集する
+          let results = this.params.map((p) => Simulation.execute(p.param, this.priceDB, amount));
+          results.sort((x, y) => {return y.profit - x.profit;});
 
-        let best = results[0];
-        // console.log(`${datelog()}\t${this.pair}\t best=${JSON.stringify(best.param)}\tprofit:${best.profit}`);
-        for(let result of results){
-          console.log(`${Util.datelog()}\t${this.pairstr}\t${JSON.stringify(result.param)}\tprofit:${result.profit}`);
+          let best = results[0];
+          // console.log(`${datelog()}\t${this.pair}\t best=${JSON.stringify(best.param)}\tprofit:${best.profit}`);
+          for(let result of results){
+            console.log(`${Util.datelog()}\t${this.pairstr}\t${JSON.stringify(result.param)}\tprofit:${result.profit}`);
+          }
+
+          // 成績順にソートしたエージェントをファイルに書き出して1loop終了
+          fs.writeFileSync(this.filepath(), JSON.stringify(results, null, "\t"));
+          // 手元に残す
+          this.params = results;
+        } else {
+          console.log("WARINING: price list is empty.");  
         }
-
-        // 成績順にソートしたエージェントを返してupdate終了
-        return results;
-      })
-      .then((results:Agent.ParamProfit[]) => {
-        fs.writeFileSync(this.filepath(), JSON.stringify(results));
       })
       .catch((error) => {
         console.log("ERROR: optimize", error);

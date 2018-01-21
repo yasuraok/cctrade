@@ -82,6 +82,10 @@ export class PriceDB{
   }
 
   latest(){
-    return {"ask": this.avgs[0].getAsk(), "bid": this.avgs[0].getBid()};
+    if (this.prices != null){
+      return {"ask": this.avgs[0].getAsk(), "bid": this.avgs[0].getBid()};
+    } else {
+      return null;
+    }
   }
 }
