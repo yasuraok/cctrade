@@ -1,3 +1,4 @@
+var Realm     = require('realm');
 import {Average} from "./avg";
 
 //- aas: ask average short: 買う時の移動平均線の短い方の個数 (3)
@@ -60,6 +61,10 @@ export namespace Agent{
       return {param:this.param, profit:this.profit};
     }
 
+    static parse(obj): ParamProfit{
+      return new ParamProfit(obj.param, obj.profit);
+    }
+
     static makeRandom(): ParamProfit{
       return new ParamProfit(Param.makeRandom(), 0);
     }
@@ -93,21 +98,6 @@ export namespace Agent{
       const avgLong:number  = avg.getBidAvg(this.param.bal);
 
       return (avgShort <= avgLong) ? Action.SELL : Action.NONE;
-
-        // if (sell){
-        //   // 成行で売る=bidの価格で売ったことにする
-        //   const receive:number = Math.floor(latest.bid * this.amount);
-        //   const profit:number  = receive - this.payment;
-        //   // console.log(`${datelog()}\t${this.pair}\t${JSON.stringify(this.param)}\tSell for ${latest.bid} yen * ${this.amount} (profit ${profit})`);
-        //   // 結果をデータベースに記録する
-        //   new Promise()
-        //   return scoreDB.insert(this.pair, this.param, receive, this.payment)
-        //     .then(() => {
-        //       this.amount  = 0; // 価格を初期化
-        //       this.payment = 0; // 価格を初期化
-        //       return;
-        //     })
-        // }
     }
 
     // 買ってない場合->買うか何もしないか
@@ -115,19 +105,13 @@ export namespace Agent{
       // askの価格を使って2つの移動平均線を作り、その短い方が高い値段になっているかを調べる
       const avgShort:number = avg.getAskAvg(this.param.aas);
       const avgLong:number  = avg.getAskAvg(this.param.aal);
-      console.log(avgShort, avgLong);
+      // console.log(avgShort, avgLong);
 
       const isSpreadSmall:boolean = (avg.getAsk() / avg.getBid()) <= this.param.spr;
       // console.log("SPREAD:", latest.ask, latest.bid, latest.ask / latest.bid, this.param.spr)
       const isAskRatioLarge:boolean = (avgShort / avgLong) >= this.param.ath;
-       console.log("ASKRATIO:", avgShort, avgLong, avgShort / avgLong, this.param.ath)
+       // console.log("ASKRATIO:", avgShort, avgLong, avgShort / avgLong, this.param.ath)
       return (isSpreadSmall && isAskRatioLarge) ? Action.BUY : Action.NONE;
-
-        // if (){
-        //   this.amount  = amount;
-        //   this.payment = Math.ceil(latest.ask * amount); // 成行で買う=askの価格で買ったことにする
-        //   // console.log(`${datelog()}\t${this.pair}\t${JSON.stringify(this.param)}\tBuy for ${latest.ask} * ${this.amount} = ${this.payment} yen`);
-        // }
     }
 
     // 新しい価格リストを受け取って、売り買いの判断をつける
@@ -147,5 +131,61 @@ export namespace Agent{
   export function calcReceive(bid:number, amount:number): number{
     return Math.floor(bid * amount);
   }
+
+  const ParamSCHEMA = {
+    name: 'Param',
+    properties: {
+      aas: 'int',
+      aal: 'int',
+      ath: 'double',
+      bas: 'int',
+      bal: 'int',
+      spr: 'double',
+    }
+  }
+
+  const ParamProfitSCHEMA = {
+    name: 'ParamProfit',         // オブジェクト名
+    properties: {          // オブジェクトスキーマの定義
+      param: 'Param',
+      profit: 'double',
+    },
+  }
+
+  // Paramを複数プロセスから読み書きできるようにrealmで読み書きする
+  export class ParamDB{
+    private db;
+
+    constructor(filename:string){
+      this.db = new Realm({path: filename, schema: [ParamSCHEMA, ParamProfitSCHEMA]});
+    }
+
+    // レコード全置き換え
+    replace(paramProfits:ParamProfit[]){
+      return new Promise((resolve, reject) => {
+        let allObjects = this.db.objects('ParamProfit');
+        this.db.write(() => {
+          // まず元データをすべて削除
+          this.db.delete(allObjects);
+          // 次に今回のデータを登録
+          for(let pp of paramProfits){
+            const record = {param:pp.param, profit:pp.profit};
+            // オブジェクト登録
+            this.db.create('ParamProfit', record);
+          }
+          resolve();
+        });
+      });
+    }
+
+    // 全件取得
+    find(){
+      let all     = this.db.objects('ParamProfit');
+      let results = all.sorted('profit', true);
+      let objs = results.map((realmObj) => new ParamProfit(Param.parse(realmObj.param), realmObj.profit));
+      return Promise.resolve(objs);
+    }
+  }
+
 
 } // namespace

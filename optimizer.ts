@@ -53,7 +53,7 @@ class Simulation{
     let sim:Simulation = new Simulation(param);
 
     const maxLen:number = sim.getLongestAvgRequest();
-    console.log(`max length of average prices needed: ${maxLen}`);
+    // console.log(`max length of average prices needed: ${maxLen}`);
 
     // 価格履歴をたどって取引をシミュレートする
     let begin:number = priceDB.avgs.length - maxLen
@@ -61,7 +61,7 @@ class Simulation{
       const action = sim.update(priceDB.avgs[i], amount);
 
       const actionStr = (action == Agent.Action.BUY ? "buy" : (action == Agent.Action.SELL ? "sell" : ""))
-      console.log(`time:${i}, action ${actionStr}`, priceDB.avgs[i].getAsk())
+      // console.log(`time:${i}, action ${actionStr}`, priceDB.avgs[i].getAsk())
     }
 
     return new Agent.ParamProfit(param, sim.profit);
@@ -73,38 +73,32 @@ class Simulation{
 class CCOptimize{
   params:  Agent.ParamProfit[]; // N個のエージェントパラメータ
   priceDB: PriceDB;
+  paramDB: Agent.ParamDB;
   constructor(private pairstr: string, private item_unit_min:number, private item_unit_step:number){
     this.params  = [];
     this.priceDB = new PriceDB(`data/${this.pairstr}/price.db`);
-  }
-
-  filepath():string{
-    return `data/${this.pairstr}/parameter.json`;
+    this.paramDB = new Agent.ParamDB(`data/${this.pairstr}/parameter.db`);
   }
 
   prepareParam(){
-    return new Promise((resolve, reject) => {
-      if(this.params.length == 0){
-        fs.readFile(this.filepath(), (err, data) => {
-          if(err != null){
-            for(let i=0; i<10; ++i){
-              this.params.push(Agent.ParamProfit.makeRandom());
-            }
-          }else{
-            // ファイル存在 -> 読む
-            let params = JSON.parse(data).map((obj) => new Agent.ParamProfit(obj.param, obj.profit));
-            this.params = params;
+    if(this.params.length == 0){
+      return this.paramDB.find()
+        .then((records) => {
+          let len = Math.min(records.length, 10);
+          for(var i=0; i<len; ++i){
+            this.params.push(records[i]);
           }
-          resolve();
+          for(       ; i<10; ++i){
+            this.params.push(Agent.ParamProfit.makeRandom());
+          }
         });
-      } else {
-        // 最良スコア以外を乱数で初期化
-        for(let i=1; i<this.params.length; ++i){
-          this.params[i] = Agent.ParamProfit.makeRandom();
-        }
-        resolve();
+    } else {
+      // 最良スコア以外を乱数で初期化
+      for(let i=1; i<this.params.length; ++i){
+        this.params[i] = Agent.ParamProfit.makeRandom();
       }
-    });
+      return Promise.resolve();
+    }
   }
 
   // 最新の価格+履歴を元に取引シミュレーションを行い、エージェントのパラメータを学習する
@@ -131,12 +125,13 @@ class CCOptimize{
             console.log(`${Util.datelog()}\t${this.pairstr}\t${JSON.stringify(result.param)}\tprofit:${result.profit}`);
           }
 
-          // 成績順にソートしたエージェントをファイルに書き出して1loop終了
-          fs.writeFileSync(this.filepath(), JSON.stringify(results, null, "\t"));
-          // 手元に残す
+          // 成績順にソートしたエージェントをthisとデータベースに記録して終了
           this.params = results;
+          return this.paramDB.replace(results);
+
         } else {
-          console.log("WARINING: price list is empty.");  
+          console.log("WARINING: price list is empty.");
+          return;
         }
       })
       .catch((error) => {
@@ -167,7 +162,6 @@ var argv = yargs
 // var params = JSON.parse(fs.readFileSync('./parameter.json', 'utf8'));
 // パラメータを取得もしくは生成する
 let pairs:any = JSON.parse(fs.readFileSync('pairs.json'));
-pairs = pairs.filter((pair) => pair.currency_pair == "eth_jpy");  // test
 
 var ccos = pairs.map((pair) => new CCOptimize(pair.currency_pair, pair.item_unit_min, pair.item_unit_step));
 
