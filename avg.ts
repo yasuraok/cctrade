@@ -40,6 +40,25 @@ export class Link{
     return len;
   }
 
+  // thisから見てbgn番目からend番目までを新しいLinkにして返す
+  slice(bgn:number, end:number){
+    if(bgn == end){ return null; }
+
+    let iter:Link = this;
+    for(let i=0; i<bgn; ++i){
+      iter = iter.next;
+      if(iter == null){ return null; }
+    }
+    let items:any[] = [];
+    for(let i=bgn; i<end; ++i){
+      items.push(iter.item);
+      iter = iter.next;
+      if(iter == null) break;
+    }
+
+    return Link.fromArray(items);
+  }
+
   // arrayのmap関数と同じものをこのLinkでやる(結果はLinkでなくArray)
   // funcに渡される引数はitemではなくLinkそのもの
   map(func): any[]{

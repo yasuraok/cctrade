@@ -46,6 +46,16 @@ describe('avg', function () {
       assert.equal(16, a[3]);
     })
 
+    it('test for Link::slice', function(){
+      let l  = Link.fromArray([1,2,3,4,5]);
+      let s1 = l.slice(2,4);
+      let s2 = l.slice(0,4);
+      assert.equal(s1.length, 2);
+      assert.equal(s1.next.item, 4);
+      assert.equal(s2.length, 4)
+      assert.equal(s2.end().item, 4);
+    })
+
     it('test for Average class', function(){
       var prices = Link.fromArray([
         {"ask":200, "bid":100},
