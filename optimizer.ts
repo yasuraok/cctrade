@@ -104,7 +104,8 @@ class CCOptimize{
   // 最新の価格+履歴を元に取引シミュレーションを行い、エージェントのパラメータを学習する
   loop1(){
     // 1. 最新価格の取得
-    return this.priceDB.fetch(this.pairstr)
+    const limit = Util.DAYS4SCORING * 24 * 60;
+    return this.priceDB.fetch(this.pairstr, limit)
       .then(() => {
         // 2. パラメータの更新
         return this.prepareParam()

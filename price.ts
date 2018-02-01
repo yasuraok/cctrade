@@ -2,6 +2,14 @@ var Realm     = require('realm');
 
 import {Link, Average} from "./avg";
 
+// Linkの末端からn個取り外す
+function deleteN(l:Link, n:number){
+  let end = l.end();
+  for(let i=0; i<n && end != null; ++i){
+    end = end.disconnect();
+  }
+}
+
 // 価格情報のDBのラッパー
 // 非同期処理はpromise化しておく/findとinsertをこの機能に合わせた引数定義にする
 const SCHEMA = {
@@ -53,29 +61,30 @@ export class PriceDB{
   }
 
   // 最新の価格一覧を取得して価格をリンクリストに、さらに価格のリンクリストの先に移動平均価格の配列を作って返す
-  fetch(pair:string){
+  fetch(pair:string, limit:number){
     return new Promise((resolve, reject) => {
       let all    = this.db.objects(SCHEMA.name);
       let results = all.filtered("pair == $0 && date > $1", pair, this.lastDate).sorted('date', true);
       // results.forEach((val, key) => {
       //   console.log(`${val.pair}, ${dateFormat(val.date)}, ${val.ask}, ${val.bid}`);
       // });
+      results.slice(0, limit);
       resolve(results);
     }).then((newPrices:any[]) => {
       if (newPrices.length > 0){
-        let length       = newPrices.length;
         let newPriceList = Link.fromArray(newPrices);
         let newAvgs      = newPriceList.map((listNode) => new Average(listNode));
 
-        // 価格リストの更新
-        this.prices = Link.concat(newPriceList, this.prices);
-        // 移動平均価格リストの更新
-        this.avgs   = newAvgs.concat(this.avgs); // 連結
+        // 新しいレコードの連結
+        this.prices  = Link.concat(newPriceList, this.prices); // 価格リストの更新
+        this.avgs    = newAvgs.concat(this.avgs); // 移動平均価格リストの更新
+
+        // 古いレコードの削除
+        this.prices = this.prices.slice(0, limit);
+        this.avgs   = this.avgs  .slice(0, limit);
+
         // this.prices, this.avgsの最終更新時刻の更新
         this.lastDate = newPrices[0].date;
-
-        // 長さを詰める
-
       }
       return;
     })

@@ -83,9 +83,8 @@ describe('avg', function () {
 
 describe('price', function () {
     it('test for price insert/delete', function(){
-      const testPair:string = "test";
-      const dbPath:string = `data/price_${testPair}.db`;
-      fs.unlinkSync(dbPath); // 先に削除
+      const testPair:string = "test1";
+      const dbPath:string = `test/price_${testPair}.db`;
 
       const ask1:number = 400;
       const ask2:number = 420;
@@ -94,14 +93,21 @@ describe('price', function () {
       const bid2:number = 370;
       const bid3:number = 320;
 
-      var priceDB = new PriceDB(dbPath);
-      return priceDB.insert(testPair, ask1, bid1)
-        .then((result) => {
+      var priceDB;
+
+      return new Promise(function(resolve, reject){
+        fs.unlink(dbPath, (err) => { // 先に削除
+          priceDB = new PriceDB(dbPath);
+          resolve();
+        });
+      }).then(() => {
+        return priceDB.insert(testPair, ask1, bid1);
+      }).then((result) => {
         return new Promise(r => setTimeout(r, 200)); // 待つ
       }).then(() => {
         return priceDB.insert(testPair, ask2, bid2);
       }).then((result) => {
-        return priceDB.fetch(testPair);
+        return priceDB.fetch(testPair, 1000);
       }).then(() => {
         // console.log(`priceDB.avgs=${priceDB.avgs}, length=${priceDB.avgs.length}`)
         assert.equal(2, priceDB.prices.length);
@@ -114,12 +120,59 @@ describe('price', function () {
       }).then(() => {
         return priceDB.insert(testPair, ask3, bid3);
       }).then((result) => {
-        return priceDB.fetch(testPair);
+        return priceDB.fetch(testPair, 1000);
       }).then(() => {
         assert.equal(3, priceDB.prices.length);
         assert.equal(3, priceDB.avgs.length);
         assert.equal(ask3, priceDB.avgs[0].getAskAvg(1)); // この時点での最新はask3
         assert.equal((bid2 + bid1) / 2, priceDB.avgs[1].getBidAvg(2)); // 最新から1時刻過去データから2時刻分の移動平均
+        return;
+      });
+    });
+
+    it('test for price truncate', function(){
+      const testPair:string = "test2";
+      const dbPath:string = `test/price_${testPair}.db`;
+
+      var priceDB;
+
+      return new Promise(function(resolve, reject){
+        fs.unlink(dbPath, (err) => { // 先に削除
+          priceDB = new PriceDB(dbPath);
+          resolve();
+        });
+      }).then(() => {
+        return priceDB.insert(testPair, 1, 1);
+      }).then((result) => {
+        return priceDB.insert(testPair, 2, 2);
+      }).then((result) => {
+        return priceDB.fetch(testPair, 1000);
+      }).then(() => {
+        assert.equal(2, priceDB.prices.length);
+        assert.equal(2, priceDB.avgs.length);
+        return;
+      }).then(() => {
+        return priceDB.insert(testPair, 3, 3);
+      }).then((result) => {
+        return priceDB.fetch(testPair, 2);
+      }).then(() => {
+        assert.equal(2, priceDB.prices.length);
+        assert.equal(2, priceDB.avgs.length);
+        return;
+      }).then(() => {
+        return priceDB.insert(testPair, 4, 4);
+      }).then((result) => {
+        return priceDB.insert(testPair, 5, 5);
+      }).then((result) => {
+        return priceDB.insert(testPair, 6, 6);
+      }).then((result) => {
+        return priceDB.fetch(testPair, 3);
+      }).then(() => {
+        assert.equal(3, priceDB.prices.length);
+        assert.equal(3, priceDB.avgs.length);
+
+        assert.equal(6, priceDB.prices.item.ask);
+        assert.equal(6, priceDB.avgs[0].getAskAvg(1));
         return;
       });
     });

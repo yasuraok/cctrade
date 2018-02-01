@@ -70,7 +70,8 @@ class CCWatch{
       })
       .then((price) => {
         // これまでの価格履歴を取得する
-        return this.priceDB.fetch(pairstr);
+        const limit = Util.DAYS4SCORING * 24 * 60;
+        return this.priceDB.fetch(pairstr, limit);
       })
       .then(() => {
         // エージェントが稼働中であれば、取引判断をする
