@@ -39,6 +39,11 @@ export namespace Agent{
       const spr:number = 1.0 + Math.random() * 0.15;
       return new Param(aas, aal, ath, bas, bal, spr);
     }
+
+    static equals(a:Param, b:Param){
+      return (a.aas == b.aas) && (a.aal == b.aal) && (a.ath == b.ath) &&
+             (a.bas == b.bas) && (a.bal == b.bal) && (a.spr == b.spr);
+    }
   }
 
   // export function Param_make(aas:number, aal:number, ath:number, bas:number, bal:number, spr:number){

@@ -119,7 +119,9 @@ class CCWatch{
       .then((maybePP:Agent.ParamProfit) => {
         // optimizerで作った最新のパラメータに交換する (価格が更新されてるので、パラメータが変わらずスコアだけが変わっている可能性あり)
         if(maybePP != null){
-          console.log(`${Util.datelog()}\t${pairstr}\tparameter updated \t(profit ${this.param.profit}=>${maybePP.profit})`);
+          if(! Agent.Param.equals(this.param.param, maybePP.param)){
+            console.log(`${Util.datelog()}\t${pairstr}\tparameter updated \t(profit ${this.param.profit}=>${maybePP.profit})`);
+          }
           this.param = maybePP;
         }
       })
