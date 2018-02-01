@@ -28,17 +28,74 @@ function getStatus(){
   });
 }
 
+// Agentに取引判断をさせ、売買金額を記憶する
+class AgentScore{
+  agent:Agent.Agent;
+  yen:number;       // 取引で増減した円の量
+  cc:number;        // 取引で増減した仮想通貨の量
+  prevAction:Agent.Action;
+
+  constructor(param:Agent.Param){
+    this.agent      = new Agent.Agent(param)
+    this.yen        = 0;
+    this.cc         = 0;
+    this.prevAction = Agent.Action.NONE;
+  }
+
+  setParam(param:Agent.Param){
+    this.agent = new Agent.Agent(param)
+  }
+
+  // 成績をクリアする
+  clear(){
+    this.yen    = 0
+    this.cc     = 0
+  }
+
+  update(avg:Average, amount:number){
+    // 作成した移動平均価格リストを使って
+    const action:Agent.Action = this.agent.update(avg);
+
+    let retAction = Agent.Action.NONE;
+
+    if(action == Agent.Action.BUY && this.prevAction != action){
+      // 新規に買い判定になったら買う
+      this.cc  += amount;
+      this.yen -= Agent.calcPayment(avg.getAsk(), amount);;
+      retAction = Agent.Action.BUY;
+
+    }else if(action == Agent.Action.SELL && this.prevAction != action){
+      // 新規に売り判定になったら売る
+      this.yen += Agent.calcReceive(avg.getBid(), amount);
+      this.cc  -= amount;
+      retAction = Agent.Action.SELL;
+    }
+
+    this.prevAction = action;
+
+    return retAction;
+  }
+
+  // 取引中かどうか(取引中でなければパラメータを交換して良い)
+  isLong(): boolean{
+    return this.cc > 0;
+  }
+}
+
+
 class CCWatch{
   pair:    any; // zaifから取れるjsonの情報
   param:   Agent.ParamProfit;
   priceDB: PriceDB;
   paramDB: Agent.ParamDB;
+  agentScore: AgentScore;
 
   constructor(pair:any){
     this.pair    = pair;
     this.param   = Agent.ParamProfit.makeRandom();
     this.priceDB = new PriceDB(`data/${pair.currency_pair}/price.db`);
     this.paramDB = new Agent.ParamDB(`data/${pair.currency_pair}/parameter.db`);
+    this.agentScore = new AgentScore(this.param.param);
   }
 
   getParamFromFile(){
@@ -81,33 +138,26 @@ class CCWatch{
           let amount = Util.calcAmount(latest.ask, AMOUNT, item_unit_min, item_unit_step);
 
           // エージェントに判断を仰ぐ
-          // return this.agents[pairstr].update(latest, prices, amount);
+          let avg = priceDB.avgs[0];
+          let action:Agent.Action = this.agentScore.update(avg, amount);
 
-          // if (sell){
-          //   // 成行で売る=bidの価格で売ったことにする
-          //   const receive:number = Math.floor(latest.bid * this.amount);
-          //   const profit:number  = receive - this.payment;
-          //   // console.log(`${datelog()}\t${this.pair}\t${JSON.stringify(this.param)}\tSell for ${latest.bid} yen * ${this.amount} (profit ${profit})`);
-          //   // 結果をデータベースに記録する
-          //   new Promise()
-          //   return scoreDB.insert(this.pair, this.param, receive, this.payment)
-          //     .then(() => {
-          //       this.amount  = 0; // 価格を初期化
-          //       this.payment = 0; // 価格を初期化
-          //       return;
-          //     })
-          // }
+          if(action == Agent.Action.BUY){
+            // 買い取引を実行する
 
-          // if (){
-          //   this.amount  = amount;
-          //   this.payment = Math.ceil(latest.ask * amount); // 成行で買う=askの価格で買ったことにする
-          //   // console.log(`${datelog()}\t${this.pair}\t${JSON.stringify(this.param)}\tBuy for ${latest.ask} * ${this.amount} = ${this.payment} yen`);
-          // }
+          }else if(action == Agent.Action.SELL){
+            // 売り取引を実行する
 
+            // 通知する
+            let cc:number     = this.agentScore.cc;
+            let yen:number    = this.agentScore.yen;
+            let profit:number = Agent.calcReceive(avg.getBid(), cc)
+            Util.notify2ifttt(`sell: pair=${pairstr}, yen=${yen}, cc=${cc}, income=${profit}`, config.ifttt);
+          }
+
+          // ここでyen -= profitすれば、含み益分を一旦クリアできるはず
         }
 
-        let x = false;
-        if(x){
+        if(this.agentScore.isLong()){
           // エージェントが取引中(=仮想通貨取得中)ならnullを返す(次のthenでパラメータを交換しない)
           return Promise.resolve(null);
 
@@ -120,9 +170,10 @@ class CCWatch{
         // optimizerで作った最新のパラメータに交換する (価格が更新されてるので、パラメータが変わらずスコアだけが変わっている可能性あり)
         if(maybePP != null){
           if(! Agent.Param.equals(this.param.param, maybePP.param)){
-            console.log(`${Util.datelog()}\t${pairstr}\tparameter updated \t(profit ${this.param.profit}=>${maybePP.profit})`);
+            console.log(`${Util.datelog()}\t${pairstr}\tparameter updated \t(simulation profit ${this.param.profit}=>${maybePP.profit})`);
           }
           this.param = maybePP;
+          this.agentScore.setParam(this.param.param);
         }
       })
       .catch((error) => {
