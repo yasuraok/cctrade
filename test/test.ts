@@ -1,11 +1,22 @@
 import {Link, Average} from "../avg";
 import {PriceDB}       from "../price";
+import {Util}          from "../util";
 
 var assert = require('assert');
 var fs     = require('fs');
 import * as mocha from "mocha";
 
 ////////////////////////////////////////////////////////////////////////////////
+
+describe('util', function () {
+    it('test for fixupFloat', function(){
+      let d1 = Util.fixupFloat(20.42 - 10.1, 0.01);
+      assert.equal(d1, 10.32);
+
+      let d2 = Util.fixupFloat(0 - 0.0739, 0.0001);
+      assert.equal(d2, -0.0739);
+    });
+});
 
 describe('avg', function () {
     it('test for Link class', function(){

@@ -64,8 +64,8 @@ class AgentScore{
 
     }else if(action == Agent.Action.SELL && this.prevAction != action){
       // 新規に売り判定になったら売る
-      this.yen += Agent.calcReceive(avg.getBid(), amount);
       this.cc  -= amount;
+      this.yen += Agent.calcReceive(avg.getBid(), amount);
       retAction = Agent.Action.SELL;
     }
 
@@ -80,6 +80,15 @@ class AgentScore{
   }
 }
 
+function showTrade(pair:any, action:string, avg:Average, cc:number, yen:number, iftttKey:string){
+  cc                = Util.fixupFloat(cc, pair.item_unit_step); // 誤差を補正
+  let pairstr       = pair.currency_pair;
+  let bid:number    = avg.getBid();
+  let income:number = yen + Agent.calcReceive(avg.getBid(), cc);
+  let strs = [pairstr, action, `yen=${yen}`, `cc=${cc}*${bid}`, `income=${income}`];
+  console.log(Util.datelog() + "\t" + strs.join("\t"));
+  Util.notify2ifttt(strs.join(", "), config.ifttt);
+}
 
 class CCWatch{
   pair:    any; // zaifから取れるjsonの情報
@@ -141,15 +150,12 @@ class CCWatch{
 
           if(action == Agent.Action.BUY){
             // 買い取引を実行する
+            // showTrade(pairstr, "BUY", avg, this.agentScore.cc, this.agentScore.yen, config.ifttt);
 
           }else if(action == Agent.Action.SELL){
             // 売り取引を実行する
-
             // 通知する
-            let cc:number     = this.agentScore.cc;
-            let yen:number    = this.agentScore.yen;
-            let profit:number = Agent.calcReceive(avg.getBid(), cc)
-            Util.notify2ifttt(`sell: pair=${pairstr}, yen=${yen}, cc=${cc}, income=${profit}`, config.ifttt);
+            showTrade(this.pair, "SELL", avg, this.agentScore.cc, this.agentScore.yen, config.ifttt);
           }
 
           // ここでyen -= profitすれば、含み益分を一旦クリアできるはず
@@ -175,8 +181,8 @@ class CCWatch{
         }
       })
       .catch((error) => {
-        console.log("ERROR: update", error);
-        Util.notify2ifttt("error: ticker, " + pairstr, config.ifttt);
+        console.log(`${Util.datelog()}: ERROR ticker=${pairstr}`, error);
+        Util.notify2ifttt(`ERROR ticker=${pairstr}`, config.ifttt);
       });
 
   }

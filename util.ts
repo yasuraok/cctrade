@@ -57,7 +57,7 @@ export namespace Util{
 
   // ask円の通貨を、yen円内で最大でいくつ買えるかを計算する
   // 購入する通貨最小値, 通貨入力単位による制限がある
-  export function calcAmount(ask:number, yen:number, unitMin:number, unitStep:number){
+  export function calcAmount(ask:number, yen:number, unitMin:number, unitStep:number):number{
     // (unitMin + unitStep * N)*ask <= yen を満たす最大のNを求め、unitMinとの和を返す
     if (yen/ask - unitMin > 0){
       let N:number = Math.floor((yen/ask - unitMin) / unitStep);
@@ -65,6 +65,15 @@ export namespace Util{
       return decimal(unitStep).mul(N).add(unitMin).toNumber();
     } else {
       return 0;
+    }
+  }
+
+  // 誤差によって微小のずれがでている数字を、unitMinの整数倍になるように補正する
+  export function fixupFloat(value:number, unitStep:number):number{
+    if(unitStep >= 1){
+      return Math.round(value / unitStep) * unitStep;
+    }else{
+      return parseFloat(value.toFixed(Math.ceil(- Math.log10(unitStep))))
     }
   }
 
