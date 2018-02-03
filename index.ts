@@ -12,8 +12,6 @@ var config = JSON.parse(fs.readFileSync('./config.json'));
 var apiPri = zaif.createPrivateApi(config.apikey, config.secretkey, 'user agent is node-zaif');
 
 // 価格データベース
-var priceDB = new PriceDB('data/price.db');
-
 const AMOUNT:number = 10000; // 一度の取引で買う日本円金額
 const THRESHOLD:number = 0; // 現在のパラメータの利益がこの数字よりも大きければ取引判断を実際に行う
 
@@ -138,7 +136,7 @@ class CCWatch{
           let amount = Util.calcAmount(latest.ask, AMOUNT, item_unit_min, item_unit_step);
 
           // エージェントに判断を仰ぐ
-          let avg = priceDB.avgs[0];
+          let avg = this.priceDB.avgs[0];
           let action:Agent.Action = this.agentScore.update(avg, amount);
 
           if(action == Agent.Action.BUY){
