@@ -8,8 +8,8 @@ import {Agent}         from "./agent";
 import {Util}          from "./util";
 
 // zaifに接続する
-var config = JSON.parse(fs.readFileSync('./config.json'));
-var apiPri = zaif.createPrivateApi(config.apikey, config.secretkey, 'user agent is node-zaif');
+let config = JSON.parse(fs.readFileSync('./config.json'));
+let apiPri = zaif.createPrivateApi(config.apikey, config.secretkey, 'user agent is node-zaif');
 
 // 価格データベース
 const AMOUNT:number = 10000; // 一度の取引で買う日本円金額
@@ -100,8 +100,9 @@ class CCWatch{
   constructor(pair:any){
     this.pair    = pair;
     this.param   = Agent.ParamProfit.makeRandom();
-    this.priceDB = new PriceDB(`data/${pair.currency_pair}/price.db`);
-    this.paramDB = new Agent.ParamDB(`data/${pair.currency_pair}/parameter.db`);
+    let mongoUrl = `mongodb://${config.mongo_url}:${config.mongo_port}/`;
+    this.priceDB = new PriceDB(mongoUrl, config.mongo_dbname, pair.currency_pair);
+    this.paramDB = new Agent.ParamDB(mongoUrl, config.mongo_dbname, pair.currency_pair);
     this.agentScore = new AgentScore(this.param.param);
   }
 
@@ -181,8 +182,8 @@ class CCWatch{
         }
       })
       .catch((error) => {
-        console.log(`${Util.datelog()}: ERROR ticker=${pairstr}`, error);
-        Util.notify2ifttt(`ERROR ticker=${pairstr}`, config.ifttt);
+        console.log(`${Util.datelog()}: ERROR, ${pairstr}`, error);
+        Util.notify2ifttt(`ERROR, ${pairstr}, ${error}`, config.ifttt);
       });
 
   }

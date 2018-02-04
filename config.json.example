@@ -1,5 +1,8 @@
 {
   "apikey" : "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
   "secretkey" : "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
-  "ifttt" : "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"
+  "ifttt" : "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
+  "mongo_url" : "127.0.0.1",
+  "mongo_port" : "28001",
+  "mongo_dbname" : "cc1"
 }

@@ -11,16 +11,16 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@types/node": "^8.5.2",
     "decimal": "0.0.2",
-    "realm": "^2.1.1",
+    "mongodb": "^3.0.2",
     "request": "^2.83.0",
     "yargs": "^10.1.1",
     "zaif.jp": "^0.1.16"
   },
   "devDependencies": {
+    "@types/node": "^8.5.2",
+    "@types/mongodb": "^3.0.5",
     "@types/mocha": "^2.2.46",
-    "@types/nedb": "^1.8.5",
     "typescript": "^2.6.2"
   }
 }

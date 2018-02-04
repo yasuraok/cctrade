@@ -1,4 +1,4 @@
-var Realm     = require('realm');
+var MongoClient = require('mongodb').MongoClient;
 import {Average} from "./avg";
 
 //- aas: ask average short: 買う時の移動平均線の短い方の個数 (3)
@@ -157,38 +157,57 @@ export namespace Agent{
     },
   }
 
-  // Paramを複数プロセスから読み書きできるようにrealmで読み書きする
+  // Paramを複数プロセスから読み書きできるようにMongoDBで読み書きする
+  // 複数プロセスからでも同時アクセス可能
   export class ParamDB{
-    private db;
+    private db:any         = undefined;
+    private dbo:any        = undefined;
+    private collection:any = undefined;
 
-    constructor(filename:string){
-      this.db = new Realm({path: filename, schema: [ParamSCHEMA, ParamProfitSCHEMA]});
+    constructor(private url:string, private dbname:string, private pairstr:string){}
+
+    connect(){
+      if(this.collection == undefined){
+        return MongoClient.connect(this.url)
+          .then((db) => {
+            this.db  = db;
+            this.dbo = db.db(this.dbname)
+            return this.dbo.createCollection(`${this.pairstr}_parameter`);
+          })
+          .then((collection) => {
+            this.collection = collection;
+            return;
+          })
+      } else {
+        return Promise.resolve();
+      }
     }
 
-    // レコード全置き換え
-    replace(paramProfits:ParamProfit[]){
-      return new Promise((resolve, reject) => {
-        let allObjects = this.db.objects('ParamProfit');
-        this.db.write(() => {
-          // まず元データをすべて削除
-          this.db.delete(allObjects);
-          // 次に今回のデータを登録
-          for(let pp of paramProfits){
-            const record = {param:pp.param, profit:pp.profit};
-            // オブジェクト登録
-            this.db.create('ParamProfit', record);
-          }
-          resolve();
+    // データベースに推定したパラメータセットをを書き込む
+    // 過去のパラメータセットは不要なので同時に削除するが、先に削除すると一瞬レコード0の瞬間ができてしまうので
+    // 新しいパラメータセット追加 -> 新しい順でfind -> 古いものを削除、という操作をする
+    replace(records:any){
+      var length = records.length;
+      return this.connect()
+        .then(() => {
+          return this.collection.insertMany(records);
+        })
+        .then(() => {
+          return this.collection.find().sort({ $natural: -1 }).toArray();
+        })
+        .then((results) => {
+          let olds = results.slice(length, results.length);
+          let deleteCond = { _id: {$in: olds.map((r) => r._id)} };
+          return this.collection.deleteMany(deleteCond);
         });
-      });
     }
 
-    // 全件取得
+    // スコアの良い方から全件取得
     find(){
-      let all     = this.db.objects('ParamProfit');
-      let results = all.sorted('profit', true);
-      let objs = results.map((realmObj) => new ParamProfit(Param.parse(realmObj.param), realmObj.profit));
-      return Promise.resolve(objs);
+      return this.connect()
+        .then(() => {
+          return this.collection.find().sort({ profit: -1 }).toArray();
+        })
     }
   }
 

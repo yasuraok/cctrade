@@ -1,12 +1,16 @@
 import {Link, Average} from "../avg";
 import {PriceDB}       from "../price";
 import {Util}          from "../util";
+import {Agent}         from "../agent";
 
 var assert = require('assert');
 var fs     = require('fs');
 import * as mocha from "mocha";
 
 ////////////////////////////////////////////////////////////////////////////////
+
+let config   = JSON.parse(fs.readFileSync('./config.json'));
+let mongoUrl = `mongodb://${config.mongo_url}:${config.mongo_port}/`;
 
 describe('util', function () {
     it('test for fixupFloat', function(){
@@ -94,8 +98,8 @@ describe('avg', function () {
 
 describe('price', function () {
     it('test for price insert/delete', function(){
-      const testPair:string = "test1";
-      const dbPath:string = `test/price_${testPair}.db`;
+      let testPair:string = "test1";
+      let priceDB = new PriceDB(mongoUrl, config.mongo_dbname, testPair);
 
       const ask1:number = 400;
       const ask2:number = 420;
@@ -104,14 +108,8 @@ describe('price', function () {
       const bid2:number = 370;
       const bid3:number = 320;
 
-      var priceDB;
-
-      return new Promise(function(resolve, reject){
-        fs.unlink(dbPath, (err) => { // 先に削除
-          priceDB = new PriceDB(dbPath);
-          resolve();
-        });
-      }).then(() => {
+      return priceDB.clear()
+        .then(() => {
         return priceDB.insert(testPair, ask1, bid1);
       }).then((result) => {
         return new Promise(r => setTimeout(r, 200)); // 待つ
@@ -142,17 +140,11 @@ describe('price', function () {
     });
 
     it('test for price truncate', function(){
-      const testPair:string = "test2";
-      const dbPath:string = `test/price_${testPair}.db`;
+      let testPair:string = "test2";
+      var priceDB = new PriceDB(mongoUrl, config.mongo_dbname, testPair);
 
-      var priceDB;
-
-      return new Promise(function(resolve, reject){
-        fs.unlink(dbPath, (err) => { // 先に削除
-          priceDB = new PriceDB(dbPath);
-          resolve();
-        });
-      }).then(() => {
+      return priceDB.clear()
+        .then(() => {
         return priceDB.insert(testPair, 1, 1);
       }).then((result) => {
         return priceDB.insert(testPair, 2, 2);
@@ -186,5 +178,23 @@ describe('price', function () {
         assert.equal(6, priceDB.avgs[0].getAskAvg(1));
         return;
       });
+    });
+});
+
+////////////////////////////////////////////////////////////////////////////////
+describe('agent', function () {
+    it('test for agent ParamDB', function(){
+      let paramDB = new Agent.ParamDB(mongoUrl, config.mongo_dbname, "test_jpy");
+
+      let records = [{profit: 100}, {profit: 50}, {profit: 200}];
+      paramDB.replace(records)
+        .then(() => {
+          return paramDB.find();
+        })
+        .then((results) => {
+          assert.equal(records.length, results.length);
+          assert.equal(200, results[0].profit);
+        });
+
     });
 });

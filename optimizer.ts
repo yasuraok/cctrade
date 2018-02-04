@@ -6,6 +6,8 @@ import {PriceDB}       from "./price";
 import {Agent}         from "./agent";
 import {Util}          from "./util";
 
+let config = JSON.parse(fs.readFileSync('./config.json'));
+
 // 時間を進めていく間に、Agentごとに記憶しておく必要のある要素を構造体にまとめる
 class Simulation{
   agent:Agent.Agent;
@@ -76,8 +78,9 @@ class CCOptimize{
   paramDB: Agent.ParamDB;
   constructor(private pairstr: string, private item_unit_min:number, private item_unit_step:number){
     this.params  = [];
-    this.priceDB = new PriceDB(`data/${this.pairstr}/price.db`);
-    this.paramDB = new Agent.ParamDB(`data/${this.pairstr}/parameter.db`);
+    let mongoUrl = `mongodb://${config.mongo_url}:${config.mongo_port}/`;
+    this.priceDB = new PriceDB(mongoUrl, config.mongo_dbname, pairstr);
+    this.paramDB = new Agent.ParamDB(mongoUrl, config.mongo_dbname, pairstr);
   }
 
   prepareParam(){
