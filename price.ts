@@ -10,18 +10,6 @@ function deleteN(l:Link, n:number){
   }
 }
 
-// 価格情報のDBのラッパー
-// 非同期処理はpromise化しておく/findとinsertをこの機能に合わせた引数定義にする
-const SCHEMA = {
-  name: 'price',         // オブジェクト名
-  properties: {          // オブジェクトスキーマの定義
-      pair: 'string',
-      date: 'date',
-      ask: 'double',
-      bid: 'double'
-  }
-}
-
 export class PriceDB{
   private db:any         = undefined;
   private dbo:any        = undefined;

@@ -137,26 +137,6 @@ export namespace Agent{
     return Math.floor(bid * amount);
   }
 
-  const ParamSCHEMA = {
-    name: 'Param',
-    properties: {
-      aas: 'int',
-      aal: 'int',
-      ath: 'double',
-      bas: 'int',
-      bal: 'int',
-      spr: 'double',
-    }
-  }
-
-  const ParamProfitSCHEMA = {
-    name: 'ParamProfit',         // オブジェクト名
-    properties: {          // オブジェクトスキーマの定義
-      param: 'Param',
-      profit: 'double',
-    },
-  }
-
   // Paramを複数プロセスから読み書きできるようにMongoDBで読み書きする
   // 複数プロセスからでも同時アクセス可能
   export class ParamDB{
