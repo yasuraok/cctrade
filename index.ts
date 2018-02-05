@@ -226,18 +226,20 @@ class CCWatchAll{
       });
   }
 
-  // 現在価格を取得して場合によっては取引する
-  update(){
-    for(let watcher of this.watchers){
-      watcher.update();
-    }
-  }
-
   // 定期的に実行
   watch(): void{
-    this.update()
-    setInterval(() => {this.update()}, this.interval);
-    // setInterval(() => {this.update()}, 200);
+    for(let i=0; i<this.watchers.length; ++i){
+      let watcher = this.watchers[i];
+      // 同じタイミングで価格取得が集中するとエラーになりがちなので分けてみる
+      const preDelay:number = i * 1000;
+      setTimeout(() => {
+        // 現在価格を取得して場合によっては取引する
+        watcher.update();
+        // のを、繰り返す
+        setInterval(() => {watcher.update()}, this.interval);
+      }, preDelay);
+
+    }
   }
 }
 
